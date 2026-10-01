@@ -1,3 +1,20 @@
+# AstroAm en Monad
+
+> **Estado: en construcción para Monad Metropolis (cierra el 13/10/2026).** Este repo arranca desde la base de
+> AstroAm construida para Stellar
+> ([FrancoDuran23/stellar_jujuy_dev@a19ed4d](https://github.com/FrancoDuran23/stellar_jujuy_dev/tree/a19ed4d)),
+> importada tal cual en el primer commit. Todo lo posterior es trabajo nuevo
+> de la hackatón.
+
+**Qué se reutiliza:** la app, la API de misiones, el proveedor de eSIM (Citrus
+Mobile), el medidor, la política de corte, los precios y el protocolo de vales.
+
+**Qué se construye acá:** un contrato de canal de pago en Solidity (depósito, cierre con vale firmado y reembolso), el adaptador con `viem`, la wallet EVM del viajero y los links a cada transacción en la app.
+
+Lo que sigue es el README de la base (versión Stellar).
+
+---
+
 # AstroAm
 
 **Datos móviles en cualquier país, pagados por MB con USDC en Stellar. Pagás lo que usás; lo que sobra vuelve a tu wallet.**
