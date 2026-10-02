@@ -1,4 +1,5 @@
 import shipSmSrc from '../assets/ship-night.png'
+import DotIcon from './dots/DotIcon'
 
 const steps = [
   { icon: 'account_circle', color: 'text-[#B9A6FF]', step: 'STEP 01', title: 'TRAVELER', desc: 'Sets a budget and browses', img: null },
@@ -17,10 +18,10 @@ const stepColors: Record<string, string> = {
 }
 
 const pillars = [
-  { code: '01 // USDC', color: 'text-[#B9A6FF]', title: 'Stable money', desc: 'No exchange-rate swings or unexpected bank fees while you travel.' },
-  { code: '02 // MICROPAYMENTS', color: 'text-tealbrand', title: 'Tiny increments', desc: 'Pay for the megabytes you download and not a cent more.' },
-  { code: '03 // ESCROW', color: 'text-starlight', title: 'Your funds, locked', desc: 'AstroAm can only take what your app signed for; the rest returns to you.' },
-  { code: '04 // TRANSPARENCY', color: 'text-online', title: 'Verifiable record', desc: 'Deposit and settlement are on-chain, visible in the Monad explorer.' },
+  { code: '01', title: 'Stable money', desc: 'No exchange-rate swings or unexpected bank fees while you travel.', glyph: 'paid', hot: [{ x: 0.5, y: 0.5, r: 0.14 }] },
+  { code: '02', title: 'Tiny increments', desc: 'Pay for the megabytes you download and not a cent more.', glyph: 'grain', hot: [{ x: 0.7, y: 0.3, r: 0.16 }] },
+  { code: '03', title: 'Your funds, locked', desc: 'AstroAm can only take what your app signed for; the rest returns to you.', glyph: 'lock', hot: [{ x: 0.5, y: 0.66, r: 0.12 }] },
+  { code: '04', title: 'Verifiable record', desc: 'Deposit and settlement are on-chain, visible in the Monad explorer.', glyph: 'visibility', hot: [{ x: 0.5, y: 0.5, r: 0.12 }] },
 ]
 
 export default function TechnologySection() {
@@ -64,14 +65,20 @@ export default function TechnologySection() {
           </div>
         </div>
 
-        {/* 4 pillar cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        {/* 4 pillar cards: dot-art principles */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {pillars.map((p) => (
-            <div key={p.code} className="p-6 rounded-2xl bg-cardbg glass border border-cardborder hover:border-primaryviolet/50 transition-colors flex flex-col gap-2">
-              <span className={`font-mono text-xs font-bold tracking-wider ${p.color}`}>{p.code}</span>
+            <article
+              key={p.code}
+              className="pillar-card group flex flex-col gap-2 rounded-2xl border border-cardborder bg-[#0B0C20] p-5"
+            >
+              <div className="h-40">
+                <DotIcon glyph={p.glyph} hot={p.hot} cols={26} />
+              </div>
+              <span className="mt-2 font-mono text-xs text-textsecondary">{p.code} / {String(pillars.length).padStart(2, '0')}</span>
               <h4 className="font-display text-lg font-bold text-textprimary">{p.title}</h4>
-              <p className="text-xs text-textsecondary leading-relaxed">{p.desc}</p>
-            </div>
+              <p className="text-sm leading-relaxed text-textsecondary">{p.desc}</p>
+            </article>
           ))}
         </div>
 
