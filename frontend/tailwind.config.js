@@ -1,62 +1,68 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
-  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        bglight: '#FAF9F7',
-        cardbg: '#FFFFFF',
-        warmneutral: '#F4F2F1',
-        cardborder: '#E8E5E4',
-        textprimary: '#19181D',
-        textsecondary: '#5F5C68',
-        primaryviolet: {
-          DEFAULT: '#6941FF',
-          hover: '#5A32F4',
-          light: '#EEE9FF',
-          dim: 'rgba(105, 65, 255, 0.08)',
+        // Deep space grounds, from the page down to raised surfaces.
+        space: {
+          950: '#05050C',
+          900: '#0A0A16',
+          850: '#0F0F20',
+          800: '#15152B',
+          700: '#1F1F3B',
         },
-        stellar: '#FDDA24',
-        tealbrand: '#008C99',
-        cyanlight: '#E5F7F8',
-        online: '#31C48D',
-        alerta: '#E85D5D',
+        line: {
+          DEFAULT: 'rgba(243, 242, 251, 0.08)',
+          strong: 'rgba(243, 242, 251, 0.16)',
+        },
+        ink: {
+          DEFAULT: '#F3F2FB',
+          muted: '#A3A0BF',
+          faint: '#6E6B8C',
+        },
+        // Accent: the signal. Primary actions and live data.
+        signal: {
+          DEFAULT: '#3CE6D4',
+          deep: '#14B8A6',
+          dim: 'rgba(60, 230, 212, 0.12)',
+        },
+        // AstroAm's ring violet: secondary brand color.
+        orbit: {
+          DEFAULT: '#8B6CFF',
+          dim: 'rgba(139, 108, 255, 0.14)',
+        },
+        // The star in the logo. Used sparingly.
+        star: '#FDDA24',
+        ok: '#4ADE80',
+        warn: '#FBBF24',
+        alert: '#FF6B6B',
       },
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
-        display: ['Space Grotesk', 'sans-serif'],
-        mono: ['Space Mono', 'monospace'],
+        sans: ['Manrope', 'system-ui', 'sans-serif'],
+        display: ['"Space Grotesk"', 'system-ui', 'sans-serif'],
+        mono: ['"Space Mono"', 'ui-monospace', 'monospace'],
+        pixel: ['"Press Start 2P"', 'ui-monospace', 'monospace'],
       },
       keyframes: {
-        floatShip: {
-          '0%, 100%': { transform: 'translateY(0px) rotate(0deg)' },
-          '50%': { transform: 'translateY(-12px) rotate(1.5deg)' },
+        rise: {
+          '0%': { opacity: '0', transform: 'translateY(10px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
         },
-        slowDriftA: {
-          '0%, 100%': { transform: 'translate(0, 0) rotate(0deg)' },
-          '50%': { transform: 'translate(-10px, 12px) rotate(16deg)' },
+        floaty: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-8px)' },
         },
-        slowDriftB: {
-          '0%, 100%': { transform: 'translate(0, 0) rotate(0deg)' },
-          '50%': { transform: 'translate(10px, -10px) rotate(-14deg)' },
-        },
-        pulseBeam: {
-          '0%': { strokeDashoffset: '400' },
-          '100%': { strokeDashoffset: '0' },
-        },
-        portalSpin: {
-          '0%': { transform: 'rotate(0deg) scale(1)' },
-          '50%': { transform: 'rotate(180deg) scale(1.04)' },
-          '100%': { transform: 'rotate(360deg) scale(1)' },
+        tick: {
+          '0%': { opacity: '0', transform: 'translateY(6px)' },
+          '15%, 70%': { opacity: '1', transform: 'translateY(0)' },
+          '100%': { opacity: '0', transform: 'translateY(-14px)' },
         },
       },
       animation: {
-        'float-ship': 'floatShip 5s ease-in-out infinite',
-        'drift-a': 'slowDriftA 16s ease-in-out infinite',
-        'drift-b': 'slowDriftB 20s ease-in-out infinite',
-        portal: 'portalSpin 24s linear infinite',
-        'portal-teal': 'spin 35s linear infinite',
+        rise: 'rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both',
+        floaty: 'floaty 5s ease-in-out infinite',
+        tick: 'tick 1.6s ease-out both',
       },
     },
   },
