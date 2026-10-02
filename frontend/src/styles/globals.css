@@ -2,87 +2,97 @@
 @tailwind components;
 @tailwind utilities;
 
-*,
-*::before,
-*::after {
+/* ── Global resets ── */
+*, *::before, *::after {
   box-sizing: border-box;
 }
 
 html {
   scroll-behavior: smooth;
-  background: theme('colors.space.950');
+}
+
+html {
   color-scheme: dark;
 }
 
 body {
-  @apply bg-space-950 text-ink font-sans antialiased overflow-x-hidden;
+  @apply bg-bglight text-textprimary font-sans antialiased overflow-x-hidden;
 }
 
 ::selection {
-  background-color: rgba(60, 230, 212, 0.25);
-  color: theme('colors.ink.DEFAULT');
+  background-color: rgba(123, 92, 255, 0.35);
+  color: #FFFFFF;
 }
 
-:focus-visible {
-  outline: 2px solid theme('colors.signal.DEFAULT');
-  outline-offset: 3px;
-  border-radius: 8px;
+/* ── Faint grid over the starfield ── */
+.fintech-grid {
+  background-size: 48px 48px;
+  background-image:
+    linear-gradient(to right, rgba(123, 92, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(123, 92, 255, 0.05) 1px, transparent 1px);
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
 }
 
-h1,
-h2,
-h3 {
-  text-wrap: balance;
+/* ── Glass card over the starfield ── */
+.glass {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
-/* Material Symbols */
+/* ── Glowing text and twinkling sparkle ── */
+.text-glow {
+  text-shadow: 0 0 18px rgba(123, 92, 255, 0.55), 0 0 42px rgba(47, 208, 221, 0.25);
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.35; transform: scale(0.8) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1.15) rotate(45deg); }
+}
+
+.animate-twinkle {
+  animation: twinkle 3.2s ease-in-out infinite;
+}
+
+input[type='date']::-webkit-calendar-picker-indicator {
+  filter: invert(0.85);
+}
+
+/* ── Material Symbols icon utility ── */
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined';
   font-weight: normal;
   font-style: normal;
-  font-size: 22px;
+  font-size: 24px;
   line-height: 1;
   letter-spacing: normal;
   text-transform: none;
   display: inline-block;
   white-space: nowrap;
+  word-wrap: normal;
   direction: ltr;
+  -webkit-font-feature-settings: 'liga';
   font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
   vertical-align: middle;
 }
 
-@layer components {
-  .eyebrow {
-    @apply font-mono text-[11px] uppercase tracking-[0.18em] text-signal;
-  }
-
-  .panel {
-    @apply rounded-2xl border border-line bg-space-900/80 backdrop-blur-sm;
-  }
-
-  .btn-primary {
-    @apply inline-flex min-h-[48px] items-center justify-center gap-2 rounded-full bg-signal px-6 font-display text-sm font-semibold text-space-950 transition hover:bg-[#62F0E1] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40;
-  }
-
-  .btn-ghost {
-    @apply inline-flex min-h-[48px] items-center justify-center gap-2 rounded-full border border-line-strong px-6 font-display text-sm font-semibold text-ink transition hover:border-ink-muted hover:bg-white/5 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40;
-  }
-
-  .chip {
-    @apply inline-flex items-center gap-2 rounded-full border border-line bg-white/[0.03] px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink-muted;
-  }
-
-  .field-label {
-    @apply font-mono text-[11px] uppercase tracking-[0.14em] text-ink-faint;
-  }
-
-  .tabular {
-    font-variant-numeric: tabular-nums;
-  }
+/* ── Custom pulse-beam animation for SVG stroke ── */
+@keyframes pulseBeam {
+  0%   { stroke-dashoffset: 400; }
+  100% { stroke-dashoffset: 0; }
 }
 
-/* Safe areas */
+.animate-pulse-beam {
+  animation: pulseBeam 4s linear infinite;
+}
+
+/* ── Launch hover effect ── */
+.group-launch:hover .launch-thrust {
+  transform: translateY(-8px) scale(1.03);
+  filter: drop-shadow(0 12px 28px rgba(123, 92, 255, 0.55));
+}
+
+/* ── Mobile & Safe Area Utilities ── */
 .pt-safe {
   padding-top: max(1rem, env(safe-area-inset-top));
 }
@@ -90,26 +100,17 @@ h3 {
   padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
 .pb-safe-nav {
-  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
-}
-
-/* Range inputs: signal track */
-input[type='range'] {
-  accent-color: theme('colors.signal.DEFAULT');
+  padding-bottom: calc(5rem + env(safe-area-inset-bottom));
 }
 
 @media (max-width: 767px) {
-  input,
-  select,
-  textarea {
+  input, select, textarea {
     font-size: 16px !important;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  ::before,
-  ::after {
+  *, ::before, ::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

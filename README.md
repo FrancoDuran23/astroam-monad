@@ -40,9 +40,9 @@ This repository starts from AstroAm's base built for another hackathon
 (Stellar), imported unchanged in the first commit
 ([`0ae9756`](https://github.com/FrancoDuran23/astroam-monad/commit/0ae9756)).
 Everything after it is new work for Metropolis: Stellar was removed, payments
-were moved behind a chain-agnostic `PaymentRail`, the frontend was redesigned
-(WebGPU shaders with [vgpu](https://github.com/vercel-labs/vgpu)), and the
-Monad payment channel was added (`contracts/`, `src/rails/MonadRail.ts`,
+were moved behind a chain-agnostic `PaymentRail`, the Stellar-era frontend was
+translated to English and moved to a dark space theme with a moving starfield,
+and the Monad payment channel was added (`contracts/`, `src/rails/MonadRail.ts`,
 `frontend/src/chain/monad.ts`).
 
 ## How it works
@@ -78,7 +78,7 @@ src/
   server/       HTTP app: /health, /ready, /api, /citrus/webhooks
 contracts/      AstroAmEscrow.sol + Foundry tests
 scripts/        deploy-monad-escrow.ts
-frontend/       React + Vite + Tailwind; WebGPU shaders in frontend/src/gpu,
+frontend/       React + Vite + Tailwind; starfield in components/StarfieldBackground.tsx,
                 wallet + session-key vouchers in frontend/src/chain/monad.ts
 ```
 
@@ -104,11 +104,10 @@ read the channel deposit, sign vouchers, close and refund. Amounts are BigInt
 in an internal raw unit (1 raw = 1e-7 USDC); each rail converts to its token's
 decimals.
 
-The frontend has two WebGPU pieces, both with a CSS fallback for browsers
-without WebGPU and a still frame for reduced motion:
-
-- `signal-field.wgsl` — the landing background: a nebula and signal waves that follow the pointer.
-- `data-stream.wgsl` — the trip balance: a tank that drains as data is used, packets that speed up on each reading.
+The background is a Canvas 2D starfield (`frontend/src/components/StarfieldBackground.tsx`):
+three parallax layers of twinkling stars, bright stars with a halo and a four-point
+sparkle, a drifting band of cosmic dust and the odd shooting star. It follows the
+pointer, pauses in hidden tabs and draws a still frame for reduced motion.
 
 ## Pricing
 

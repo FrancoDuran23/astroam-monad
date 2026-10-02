@@ -1,25 +1,41 @@
 import { useMission } from '../hooks/useMission'
 
-/** Where payments run right now: a live chain, simulated, or no server. */
+const BADGE = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold tracking-wider uppercase border'
+
 export default function SystemBadge() {
   const { caps, backendError, isDemoMode } = useMission()
 
-  let tone = 'border-warn/40 text-warn'
-  let label = 'Simulated payments'
   if (isDemoMode) {
-    label = 'Offline demo'
-  } else if (backendError || !caps?.backendAvailable) {
-    tone = 'border-alert/40 text-alert'
-    label = 'Server offline'
-  } else if (caps.paymentsLive) {
-    tone = 'border-signal/40 text-signal'
-    label = caps.paymentRail
+    return (
+      <span className={`${BADGE} bg-amber-400/10 border-amber-400/30 text-amber-300`}>
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+        DEMO MODE
+      </span>
+    )
+  }
+
+  if (backendError || !caps || !caps.backendAvailable) {
+    return (
+      <span className={`${BADGE} bg-alerta/10 border-alerta/30 text-alerta`}>
+        <span className="w-1.5 h-1.5 rounded-full bg-alerta" />
+        SERVER OFFLINE
+      </span>
+    )
+  }
+
+  if (caps.paymentsLive) {
+    return (
+      <span className={`${BADGE} bg-online/10 border-online/30 text-online`}>
+        <span className="w-1.5 h-1.5 rounded-full bg-online animate-pulse" />
+        {caps.paymentRail.toUpperCase()}
+      </span>
+    )
   }
 
   return (
-    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border bg-white/[0.03] px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider ${tone}`}>
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      {label}
+    <span className={`${BADGE} bg-starlight/10 border-starlight/30 text-starlight`}>
+      <span className="w-1.5 h-1.5 rounded-full bg-starlight animate-pulse" />
+      SIMULATED PAYMENTS
     </span>
   )
 }

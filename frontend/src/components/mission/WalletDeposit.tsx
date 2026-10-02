@@ -47,30 +47,30 @@ export default function WalletDeposit({ missionId, plan, onDeposited, label }: P
 
   return (
     <div className="flex flex-col gap-3">
-      <ol className="flex flex-col gap-2 rounded-xl border border-line bg-space-900 p-3 text-sm text-ink-muted">
+      <ol className="flex flex-col gap-2 rounded-2xl border border-cardborder bg-warmneutral p-4 text-sm text-textsecondary">
         <li className="flex gap-2">
-          <span className="font-mono text-signal">1</span>
+          <span className="font-mono font-bold text-tealbrand">1</span>
           Approve {amount.toFixed(2)} USDC on {plan.chainName}
         </li>
         <li className="flex gap-2">
-          <span className="font-mono text-signal">2</span>
+          <span className="font-mono font-bold text-tealbrand">2</span>
           {plan.method === 'deposit' ? 'Deposit it into your trip escrow' : 'Add it to your trip escrow'}
         </li>
         {plan.method === 'deposit' && (
           <li className="flex gap-2">
-            <span className="font-mono text-signal">3</span>
+            <span className="font-mono font-bold text-tealbrand">3</span>
             This app gets a session key to sign usage vouchers — no popup per MB
           </li>
         )}
       </ol>
 
       {!hasInjectedWallet() && (
-        <p className="rounded-xl border border-warn/40 bg-warn/10 p-3 text-sm text-warn">
+        <p className="rounded-xl border border-starlight/40 bg-starlight/10 p-3 text-sm text-starlight">
           No browser wallet found. Install MetaMask or Rabby, add test USDC from faucet.circle.com and MON for gas from faucet.monad.xyz.
         </p>
       )}
 
-      <button type="button" onClick={() => void pay()} disabled={step !== null || !hasInjectedWallet()} className="btn-primary">
+      <button type="button" onClick={() => void pay()} disabled={step !== null || !hasInjectedWallet()} className="w-full py-3.5 rounded-full bg-primaryviolet text-white font-sans font-bold text-sm uppercase tracking-wider shadow-[0_0_24px_rgba(123,92,255,0.55)] hover:bg-primaryviolet-hover disabled:opacity-50 transition-all flex items-center justify-center gap-2 min-h-[48px]">
         <span className="material-symbols-outlined text-[20px]">account_balance_wallet</span>
         {step ? STEP_LABEL[step] : label}
       </button>
@@ -79,13 +79,13 @@ export default function WalletDeposit({ missionId, plan, onDeposited, label }: P
         href={`${plan.explorer}/address/${plan.contract}`}
         target="_blank"
         rel="noreferrer"
-        className="text-center font-mono text-[11px] text-ink-faint hover:text-signal"
+        className="text-center font-mono text-[11px] text-textsecondary hover:text-[#B9A6FF]"
       >
         Escrow {plan.contract.slice(0, 10)}…{plan.contract.slice(-6)} ↗
       </a>
 
       {error && (
-        <p role="alert" className="rounded-xl border border-alert/40 bg-alert/10 p-3 text-sm text-alert">
+        <p role="alert" className="rounded-xl border border-alerta/30 bg-alerta/10 p-3 font-mono text-xs text-alerta">
           {error}
         </p>
       )}

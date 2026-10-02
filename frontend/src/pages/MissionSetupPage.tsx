@@ -12,13 +12,7 @@ import { useMission } from '../hooks/useMission'
 import { addDays, shortTx, today } from '../utils/missionUtils'
 import type { PaymentIntentInfo, WizardData, WizardStep } from '../types/mission'
 
-const STEP_LABELS = ['Destination', 'Dates', 'Budget', 'Review']
-const TITLES: Record<WizardStep, string> = {
-  1: 'Where are you going?',
-  2: 'When is the trip?',
-  3: 'How much do you want to deposit?',
-  4: 'Review your trip',
-}
+const STEP_LABELS = ['DESTINATION', 'DATES', 'BUDGET', 'CONFIRM']
 
 const DEFAULT_DATA: WizardData = {
   destination: null,
@@ -30,95 +24,7 @@ const DEFAULT_DATA: WizardData = {
   autoPauseAtLimit: true,
 }
 
-function DepositPanel({
-  intent,
-  missionId,
-  simulated,
-  txHash,
-  onTxHash,
-  onSubmit,
-  onWalletDeposit,
-  busy,
-}: {
-  intent: PaymentIntentInfo
-  missionId: string
-  simulated: boolean
-  txHash: string
-  onTxHash: (v: string) => void
-  onSubmit: () => void
-  onWalletDeposit: (txHash: string) => Promise<void>
-  busy: boolean
-}) {
-  if (intent.evm && !simulated) {
-    return (
-      <div className="flex flex-col gap-5">
-        <div>
-          <span className="eyebrow">Deposit · {intent.evm.chainName}</span>
-          <h2 className="mt-1 font-display text-2xl font-bold">
-            {intent.amount} {intent.asset}
-          </h2>
-          <p className="mt-1 text-sm text-ink-muted">
-            Locked in the AstroAm escrow on Monad. AstroAm can only take what you use, signed by this app; the rest comes back when you finish.
-          </p>
-        </div>
-        <WalletDeposit missionId={missionId} plan={intent.evm} onDeposited={onWalletDeposit} label={`Pay ${intent.amount} USDC with wallet`} />
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <span className="eyebrow">Deposit</span>
-          <h2 className="mt-1 font-display text-2xl font-bold">
-            {intent.amount} {intent.asset}
-          </h2>
-          <p className="mt-1 text-sm text-ink-muted">Goes into your trip&apos;s payment channel. Unused USDC comes back when you finish.</p>
-        </div>
-        {simulated && <span className="chip shrink-0 border-warn/40 text-warn">Simulated</span>}
-      </div>
-
-      {intent.qr && (
-        <div className="mx-auto rounded-2xl bg-ink p-3">
-          <img src={intent.qr} alt="Deposit QR code" className="h-44 w-44" />
-        </div>
-      )}
-
-      {intent.payTo && (
-        <div className="rounded-xl border border-line bg-space-900 p-3">
-          <div className="field-label">Payment channel address</div>
-          <div className="mt-1 break-all font-mono text-xs text-ink-muted">{intent.payTo}</div>
-        </div>
-      )}
-
-      {intent.paymentUri && !simulated && (
-        <a href={intent.paymentUri} className="btn-ghost">
-          <span className="material-symbols-outlined text-[20px]">account_balance_wallet</span>
-          Open in wallet
-        </a>
-      )}
-
-      {!simulated && (
-        <label className="flex flex-col gap-2">
-          <span className="field-label">Transaction hash</span>
-          <input
-            id="tx-hash"
-            type="text"
-            value={txHash}
-            onChange={(e) => onTxHash(e.target.value)}
-            placeholder="0x…"
-            className="min-h-[48px] rounded-xl border border-line bg-space-900 px-3 font-mono text-sm text-ink placeholder:text-ink-faint"
-          />
-        </label>
-      )}
-
-      <button type="button" onClick={onSubmit} disabled={busy || (!simulated && !txHash.trim())} className="btn-primary">
-        {busy ? 'Confirming…' : simulated ? 'Simulate deposit' : 'Confirm deposit'}
-      </button>
-    </div>
-  )
-}
+const CARD = 'bg-cardbg glass rounded-3xl border border-cardborder shadow-[0_0_40px_rgba(123,92,255,0.12)] p-5 sm:p-8'
 
 export default function MissionSetupPage() {
   const navigate = useNavigate()
@@ -127,13 +33,16 @@ export default function MissionSetupPage() {
   const [step, setStep] = useState<WizardStep>(1)
   const [data, setData] = useState<WizardData>(DEFAULT_DATA)
   const [activating, setActivating] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
+  // API payment flow state
   const [paymentIntent, setPaymentIntent] = useState<PaymentIntentInfo | null>(null)
   const [txHashInput, setTxHashInput] = useState('')
   const [paymentValidating, setPaymentValidating] = useState(false)
+
   const simulated = isDemoMode || !caps?.paymentsLive
+  const networkLabel = simulated ? 'Simulated payments' : (caps?.paymentRail ?? 'Monad Testnet')
 
   function update(field: string, value: unknown) {
     setData((prev) => ({ ...prev, [field]: value }))
@@ -173,13 +82,13 @@ export default function MissionSetupPage() {
       }
     } catch (e) {
       setActivating(false)
-      setError(e instanceof Error ? e.message : 'Could not create the trip')
+      setError(e instanceof Error ? e.message : 'Could not create the mission')
     } finally {
       setPreparing(false)
     }
   }
 
-  async function handleConfirmPayment() {
+  async function handleConfirmPaymentSubmit() {
     if (!paymentIntent) return
     setError(null)
     setPaymentValidating(true)
@@ -213,83 +122,181 @@ export default function MissionSetupPage() {
     }
   }
 
+  const title = paymentIntent
+    ? 'Load your fuel'
+    : step === 1
+      ? 'Pick your destination'
+      : step === 2
+        ? 'Set the dates'
+        : step === 3
+          ? 'Set your budget'
+          : 'Confirm the mission'
+
   return (
-    <MobileAppShell title="New trip" showBack showBottomNav={false}>
+    <MobileAppShell title={`NEW MISSION (${step}/4)`} showBack showBottomNav={false}>
       {activating && <ActivationOverlay simulated={simulated} onComplete={() => navigate('/mission/esim')} />}
 
+      {/* Server error banner */}
       {!isDemoMode && backendError && (
-        <div role="alert" className="panel mb-6 border-alert/40 p-5">
-          <div className="flex items-center gap-2 text-alert">
-            <span className="material-symbols-outlined">cloud_off</span>
-            <h2 className="font-display font-semibold">Can&apos;t reach the server</h2>
+        <div role="alert" className="mb-6 p-6 bg-cardbg glass rounded-3xl border border-alerta/40">
+          <div className="flex items-center gap-3 text-alerta mb-3">
+            <span className="material-symbols-outlined text-2xl">cloud_off</span>
+            <h2 className="font-mono text-sm font-bold uppercase tracking-wider">[ SERVER UNAVAILABLE ]</h2>
           </div>
-          <p className="mt-2 text-sm text-ink-muted">{backendError}</p>
-          <button type="button" onClick={() => void retryBackend()} className="btn-ghost mt-4 min-h-[40px]">
-            <span className="material-symbols-outlined text-[18px]">refresh</span>
-            Try again
+          <p className="font-sans text-sm text-textsecondary mb-4 leading-relaxed">{backendError}</p>
+          <button
+            type="button"
+            onClick={() => void retryBackend()}
+            className="w-full sm:w-auto px-6 py-3 rounded-full bg-primaryviolet text-white font-sans font-semibold text-xs uppercase tracking-wider hover:bg-primaryviolet-hover transition-all flex items-center justify-center gap-2 min-h-[44px]"
+          >
+            <span className="material-symbols-outlined text-sm">refresh</span>
+            RETRY
           </button>
         </div>
       )}
 
-      <WizardProgress current={step} labels={STEP_LABELS} />
-      <h1 className="mt-5 font-display text-2xl font-bold">{paymentIntent ? 'Add your USDC' : TITLES[step]}</h1>
+      {/* Section label */}
+      <div className="flex flex-col gap-1 mb-6">
+        <span className="font-mono text-[11px] font-bold text-[#B9A6FF] tracking-widest uppercase">[ NEW MISSION // SETUP ]</span>
+        <h1 className="font-display text-2xl sm:text-3xl font-bold text-textprimary text-glow">{title}</h1>
+      </div>
 
-      <div className="mt-6">
-        {paymentIntent ? (
-          <DepositPanel
-            intent={paymentIntent}
-            missionId={mission?.id ?? ''}
-            simulated={simulated}
-            txHash={txHashInput}
-            onTxHash={setTxHashInput}
-            onSubmit={() => void handleConfirmPayment()}
-            onWalletDeposit={handleWalletDeposit}
-            busy={paymentValidating}
+      {/* Wizard progress */}
+      <div className="mb-8">
+        <WizardProgress current={step} labels={STEP_LABELS} />
+      </div>
+
+      {/* Step content */}
+      <div className={CARD}>
+        {!paymentIntent && step === 1 && <StepDestination selected={data.destination} onSelect={(d) => update('destination', d)} />}
+        {!paymentIntent && step === 2 && (
+          <StepDuration
+            startDate={data.startDate}
+            endDate={data.endDate}
+            onChange={(s, e) => setData((prev) => ({ ...prev, startDate: s, endDate: e }))}
           />
-        ) : (
-          <>
-            {step === 1 && <StepDestination selected={data.destination} onSelect={(d) => update('destination', d)} />}
-            {step === 2 && (
-              <StepDuration
-                startDate={data.startDate}
-                endDate={data.endDate}
-                onChange={(s, e) => setData((prev) => ({ ...prev, startDate: s, endDate: e }))}
+        )}
+        {!paymentIntent && step === 3 && data.destination && (
+          <StepBudget
+            destination={data.destination}
+            budgetUsdc={data.budgetUsdc}
+            dailyLimitUsdc={data.dailyLimitUsdc}
+            alertAt20pct={data.alertAt20pct}
+            autoPauseAtLimit={data.autoPauseAtLimit}
+            onChange={update}
+          />
+        )}
+        {!paymentIntent && step === 4 && (
+          <StepConfirm data={data} networkLabel={networkLabel} busy={preparing} onBack={back} onConfirm={() => void handleConfirm()} />
+        )}
+
+        {/* Deposit */}
+        {paymentIntent && (
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cardborder pb-4">
+              <div>
+                <span className="font-mono text-xs font-bold text-[#B9A6FF] uppercase tracking-wider block mb-1">
+                  [ {networkLabel.toUpperCase()} // MISSION DEPOSIT ]
+                </span>
+                <h3 className="font-display text-xl font-bold text-textprimary">
+                  Deposit {paymentIntent.amount} {paymentIntent.asset}
+                </h3>
+                <p className="text-xs text-textsecondary mt-1">
+                  It goes into your trip&apos;s escrow, not to us. Unused USDC comes back when you end the trip.
+                </p>
+              </div>
+              {simulated && (
+                <span className="self-start sm:self-auto px-2.5 py-1 rounded-full text-xs font-mono font-bold bg-starlight/10 text-starlight border border-starlight/30">
+                  SIMULATED
+                </span>
+              )}
+            </div>
+
+            {paymentIntent.evm && !simulated ? (
+              <WalletDeposit
+                missionId={mission?.id ?? ''}
+                plan={paymentIntent.evm}
+                onDeposited={handleWalletDeposit}
+                label={`Pay ${paymentIntent.amount} USDC with wallet`}
               />
+            ) : (
+              <>
+                <div className="flex flex-col items-center gap-6">
+                  {paymentIntent.qr && (
+                    <div className="flex flex-col items-center justify-center p-4 bg-white rounded-2xl w-full max-w-[260px] shadow-[0_0_30px_rgba(123,92,255,0.3)]">
+                      <img src={paymentIntent.qr} alt="Deposit QR code" className="w-52 h-52 object-contain rounded-lg" />
+                    </div>
+                  )}
+                  {paymentIntent.payTo && (
+                    <div className="w-full bg-warmneutral p-3.5 rounded-xl border border-cardborder font-mono text-xs">
+                      <span className="text-textsecondary block text-[10px]">PAYMENT CHANNEL ADDRESS</span>
+                      <span className="font-bold text-textprimary text-[10px] break-all">{paymentIntent.payTo}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-cardborder pt-4">
+                  {!simulated && (
+                    <>
+                      <label htmlFor="tx-hash" className="block font-mono text-xs text-textsecondary mb-1">
+                        TRANSACTION HASH
+                      </label>
+                      <input
+                        id="tx-hash"
+                        type="text"
+                        value={txHashInput}
+                        onChange={(e) => setTxHashInput(e.target.value)}
+                        placeholder="0x…"
+                        className="w-full mb-3 px-4 py-3 rounded-xl border border-cardborder bg-warmneutral font-mono text-xs text-textprimary focus:outline-none focus:border-primaryviolet"
+                      />
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    disabled={paymentValidating || (!simulated && !txHashInput.trim())}
+                    onClick={() => void handleConfirmPaymentSubmit()}
+                    className="w-full px-6 py-3.5 rounded-full bg-tealbrand text-[#04161A] font-sans text-sm font-bold uppercase tracking-wider shadow-[0_0_22px_rgba(47,208,221,0.5)] hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-2 min-h-[48px]"
+                  >
+                    <span className={`material-symbols-outlined text-base ${paymentValidating ? 'animate-spin' : ''}`}>
+                      {paymentValidating ? 'refresh' : 'check_circle'}
+                    </span>
+                    {simulated ? 'SIMULATE DEPOSIT' : 'CONFIRM DEPOSIT'}
+                  </button>
+                </div>
+              </>
             )}
-            {step === 3 && data.destination && (
-              <StepBudget
-                destination={data.destination}
-                budgetUsdc={data.budgetUsdc}
-                dailyLimitUsdc={data.dailyLimitUsdc}
-                alertAt20pct={data.alertAt20pct}
-                autoPauseAtLimit={data.autoPauseAtLimit}
-                onChange={update}
-              />
-            )}
-            {step === 4 && <StepConfirm data={data} onBack={back} onConfirm={() => void handleConfirm()} busy={preparing} />}
-          </>
+
+            <p className="text-center font-mono text-[10px] text-textsecondary/70">Intent {shortTx(paymentIntent.intentId)}</p>
+          </div>
+        )}
+
+        {error && (
+          <div role="alert" className="mt-4 p-3 rounded-xl bg-alerta/10 border border-alerta/30 font-mono text-xs text-alerta">
+            {error}
+          </div>
         )}
       </div>
 
-      {error && (
-        <p role="alert" className="mt-4 rounded-xl border border-alert/40 bg-alert/10 p-3 text-sm text-alert">
-          {error}
-        </p>
-      )}
-
+      {/* Navigation (steps 1-3), sticky on mobile */}
       {!paymentIntent && step < 4 && (
-        <div className="pb-safe sticky bottom-0 -mx-4 mt-8 grid grid-cols-[auto_1fr] gap-3 border-t border-line bg-space-950/90 px-4 pt-4 backdrop-blur">
-          <button type="button" onClick={back} className="btn-ghost">
-            Back
+        <div className="mt-6 sm:mt-8 flex items-center justify-between gap-3 sticky bottom-4 z-20 bg-bglight/85 backdrop-blur-md p-3 rounded-2xl border border-cardborder shadow-[0_0_30px_rgba(123,92,255,0.15)]">
+          <button
+            type="button"
+            onClick={back}
+            className="px-6 py-3.5 rounded-full border border-cardborder bg-warmneutral text-textsecondary font-sans font-semibold text-xs uppercase tracking-wider hover:text-white hover:border-primaryviolet/50 transition-all min-h-[48px]"
+          >
+            BACK
           </button>
-          <button type="button" onClick={next} disabled={!canAdvance()} className="btn-primary">
-            Continue
+          <button
+            type="button"
+            onClick={next}
+            disabled={!canAdvance()}
+            className="flex-1 sm:flex-none px-8 py-3.5 rounded-full bg-primaryviolet text-white font-sans font-bold text-xs uppercase tracking-wider shadow-[0_0_20px_rgba(123,92,255,0.5)] hover:bg-primaryviolet-hover hover:-translate-y-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0 disabled:shadow-none transition-all flex items-center justify-center gap-2 min-h-[48px]"
+          >
+            CONTINUE
+            <span className="material-symbols-outlined text-base">arrow_forward</span>
           </button>
         </div>
-      )}
-
-      {paymentIntent && (
-        <p className="mt-4 text-center font-mono text-[11px] text-ink-faint">Intent {shortTx(paymentIntent.intentId)}</p>
       )}
     </MobileAppShell>
   )

@@ -1,51 +1,41 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import shipSrc from '../assets/ship-night.png'
 import MobileAppShell from '../components/MobileAppShell'
 import ActivityFeed from '../components/dashboard/ActivityFeed'
 import TopUpModal from '../components/dashboard/TopUpModal'
-import DataStreamMeter from '../components/dashboard/DataStreamMeter'
 import { useMission } from '../hooks/useMission'
-import { DEMO_TRAFFIC_MB, estimateMb, fmtDate, fmtMb, shortTx } from '../utils/missionUtils'
+import { DEMO_TRAFFIC_MB, estimateMb, fmtDate, fmtMb, fmtUsdc, shortTx } from '../utils/missionUtils'
 import type { FinishResult } from '../types/mission'
 
-function Stat({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="rounded-xl border border-line bg-space-900 p-3">
-      <div className="field-label">{label}</div>
-      <div className={`tabular mt-1 font-display text-lg font-semibold ${tone}`}>{value}</div>
-    </div>
-  )
-}
-
-function TechRow({ label, value, href }: { label: string; value: string; href?: string }) {
-  return (
-    <div className="flex items-start justify-between gap-4 py-2">
-      <dt className="field-label">{label}</dt>
-      <dd className="break-all text-right font-mono text-xs text-ink-muted">
-        {href ? (
-          <a href={href} target="_blank" rel="noreferrer" className="text-signal hover:underline">
-            {value} ↗
-          </a>
-        ) : (
-          value
-        )}
-      </dd>
-    </div>
-  )
-}
+const CARD = 'bg-cardbg glass border border-cardborder'
 
 export default function ActiveMissionPage() {
   const navigate = useNavigate()
-  const { mission, events, caps, loading, actionLoading, isDemoMode, travelerSigns, authorizedUsdc, retryBackend, simulate, togglePause, finish, reset } =
-    useMission()
+  const {
+    mission,
+    events,
+    caps,
+    loading,
+    actionLoading,
+    isDemoMode,
+    travelerSigns,
+    authorizedUsdc,
+    retryBackend,
+    simulate,
+    togglePause,
+    finish,
+    reset,
+  } = useMission()
 
   const [showTopUp, setShowTopUp] = useState(false)
-  const [showFinish, setShowFinish] = useState(false)
+  const [showCompleteConfirm, setShowCompleteConfirm] = useState(false)
   const [finishResult, setFinishResult] = useState<FinishResult | null>(null)
-  const [pulseKey, setPulseKey] = useState(0)
+  const [flash, setFlash] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showTech, setShowTech] = useState(false)
+  const [showTechDetails, setShowTechDetails] = useState(false)
 
+  // Redirect if there is no mission (once it has finished loading from the backend)
   useEffect(() => {
     if (!loading && !mission && !isDemoMode) navigate('/mission/new', { replace: true })
   }, [loading, mission, isDemoMode, navigate])
@@ -53,257 +43,426 @@ export default function ActiveMissionPage() {
   if (!mission) return null
 
   const isPaused = mission.esimStatus === 'paused' || mission.status === 'paused'
+  const isClosing = mission.status === 'closing' || mission.status === 'refund_pending'
   const isCompleted = mission.status === 'completed'
-  const level = mission.budgetUsdc > 0 ? mission.balanceUsdc / mission.budgetUsdc : 0
-  const pct = Math.round(level * 100)
+  const pctRemaining = mission.budgetUsdc > 0 ? (mission.balanceUsdc / mission.budgetUsdc) * 100 : 0
   const mbLeft = estimateMb(mission.balanceUsdc, mission.destination.pricePerMbUsdc)
   const simulated = isDemoMode || !caps?.paymentsLive
-
-  const state = isCompleted
-    ? { label: 'Trip ended', tone: 'text-ink-faint', dot: 'bg-ink-faint' }
-    : isPaused
-      ? { label: mission.balanceUsdc <= 0 ? 'Out of balance' : 'Data paused', tone: 'text-warn', dot: 'bg-warn' }
-      : { label: 'Connected', tone: 'text-signal', dot: 'bg-signal animate-pulse' }
-
-  const note = isCompleted
-    ? 'Trip ended. The unused part of your deposit went back to your wallet.'
-    : isPaused && mission.balanceUsdc <= 0
-      ? 'Your balance is used up, so data is paused. Top up to keep browsing.'
-      : isPaused
-        ? 'Data is paused. Resume whenever you need it.'
-        : pct < 20
-          ? `Less than 20% left — about ${fmtMb(mbLeft)}. Top up before you run out.`
-          : `About ${fmtMb(mbLeft)} left in ${mission.destination.name} at your current balance.`
+  const networkLabel = simulated ? 'Simulated' : (caps?.paymentRail ?? 'Monad Testnet')
 
   async function handleSimulate() {
     setError(null)
+    setFlash(true)
+    setTimeout(() => setFlash(false), 400)
     try {
       await simulate()
-      setPulseKey((k) => k + 1)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not simulate usage')
+      setError(e instanceof Error ? e.message : 'Could not use data')
     }
   }
 
-  async function handleFinish() {
+  async function handleCompleteSubmit() {
     setError(null)
     try {
       setFinishResult(await finish())
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not end the trip')
+      setError(e instanceof Error ? e.message : 'Could not end the mission')
     }
   }
 
+  function handleReset() {
+    reset()
+    navigate('/', { replace: true })
+  }
+
+  const statusColor = isCompleted ? 'text-textsecondary' : isClosing ? 'text-amber-300' : isPaused ? 'text-starlight' : 'text-online'
+  const statusDot = isCompleted
+    ? 'bg-textsecondary/40'
+    : isClosing
+      ? 'bg-amber-400 animate-pulse'
+      : isPaused
+        ? 'bg-starlight animate-pulse shadow-[0_0_10px_#FDDA24]'
+        : 'bg-online animate-pulse shadow-[0_0_10px_#3DDC97]'
+  const statusLabel = isCompleted
+    ? 'MISSION COMPLETE'
+    : isClosing
+      ? 'SETTLING AND REFUNDING'
+      : isPaused
+        ? mission.balanceUsdc <= 0
+          ? 'OUT OF BALANCE'
+          : 'DATA PAUSED'
+        : 'LINK ACTIVE'
+
+  const providerLabel = isDemoMode || mission.isMock !== false ? 'Citrus Mobile (simulated)' : 'Citrus Mobile'
+  const iccidDisplay = mission.iccid || mission.esim?.iccid || '—'
+
+  function scrollToActivity() {
+    document.getElementById('activity-feed')?.scrollIntoView({ behavior: 'smooth' })
+  }
+
   return (
-    <MobileAppShell
-      title="Your trip"
-      onActivityClick={() => document.getElementById('activity-feed')?.scrollIntoView({ behavior: 'smooth' })}
-      showBottomNav={!showFinish}
-    >
-      {showTopUp && <TopUpModal onClose={() => { setShowTopUp(false); void retryBackend() }} />}
+    <MobileAppShell title="ACTIVE MISSION" onActivityClick={scrollToActivity} showBottomNav={!showCompleteConfirm}>
+      {/* Top-up modal */}
+      {showTopUp && (
+        <TopUpModal
+          onClose={() => {
+            setShowTopUp(false)
+            void retryBackend()
+          }}
+        />
+      )}
 
-      {/* Status */}
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <span className={`flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] ${state.tone}`}>
-            <span className={`h-2 w-2 rounded-full ${state.dot}`} />
-            {state.label}
-          </span>
-          <h1 className="mt-1 font-display text-2xl font-bold">
-            {mission.destination.flag} {mission.destination.name}
-          </h1>
-          <p className="text-sm text-ink-faint">
-            {fmtDate(mission.startDate)} → {fmtDate(mission.endDate)} · {mission.destination.coverage}
-          </p>
-        </div>
-      </div>
+      {/* Finish modal */}
+      {showCompleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="finish-title">
+          <div className="absolute inset-0 bg-[#03030B]/70 backdrop-blur-sm" onClick={() => !actionLoading && setShowCompleteConfirm(false)} />
+          <div className="relative z-10 w-full max-w-md max-h-[85vh] sm:max-h-[90vh] overflow-y-auto bg-[#0E0F27] rounded-t-3xl sm:rounded-3xl border border-cardborder shadow-[0_0_60px_rgba(123,92,255,0.25)] p-6 sm:p-7 flex flex-col gap-5 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+            <div className="w-12 h-1.5 bg-cardborder rounded-full mx-auto -mt-2 mb-1 sm:hidden" />
+            {!finishResult ? (
+              <>
+                <h3 id="finish-title" className="font-display text-xl font-bold text-textprimary">End the mission?</h3>
+                <p className="text-sm text-textsecondary leading-relaxed">
+                  Your eSIM is turned off, the final usage is settled in one transaction and the rest of your deposit goes back to your
+                  wallet.{simulated && ' (Simulated.)'}
+                </p>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={() => setShowCompleteConfirm(false)}
+                    className="flex-1 py-3 rounded-full border border-cardborder bg-warmneutral text-textsecondary font-sans font-semibold text-xs uppercase tracking-wider hover:text-white transition-all min-h-[44px]"
+                  >
+                    CANCEL
+                  </button>
+                  <button
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={() => void handleCompleteSubmit()}
+                    className="flex-1 py-3 rounded-full bg-alerta text-white font-sans font-bold text-xs uppercase tracking-wider shadow-[0_0_20px_rgba(255,107,122,0.45)] hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5 min-h-[44px]"
+                  >
+                    {actionLoading && <span className="material-symbols-outlined text-sm animate-spin">refresh</span>}
+                    END MISSION
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col gap-4 font-mono text-xs">
+                <div className="flex items-center gap-2 text-tealbrand">
+                  <span className="material-symbols-outlined text-2xl">task_alt</span>
+                  <h4 id="finish-title" className="font-bold text-sm uppercase">
+                    {finishResult.status === 'completed' ? 'MISSION SETTLED' : 'CLOSING STARTED'}
+                  </h4>
+                </div>
+                <div className="bg-warmneutral p-4 rounded-2xl border border-cardborder flex flex-col gap-2">
+                  <div className="flex justify-between">
+                    <span className="text-textsecondary">PAID FOR DATA</span>
+                    <span className="font-bold text-textprimary">{fmtUsdc(finishResult.settledUsdc ?? mission.consumedUsdc, 2)} USDC</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-textsecondary">BACK TO YOUR WALLET</span>
+                    <span className="font-bold text-tealbrand">{fmtUsdc(finishResult.refundedUsdc ?? mission.balanceUsdc, 2)} USDC</span>
+                  </div>
+                  {finishResult.txHash && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-textsecondary">CLOSE TX</span>
+                      {finishResult.explorerUrl ? (
+                        <a href={finishResult.explorerUrl} target="_blank" rel="noreferrer" className="font-bold text-[#B9A6FF] hover:underline">
+                          {shortTx(finishResult.txHash)} ↗
+                        </a>
+                      ) : (
+                        <span className="font-bold text-[#B9A6FF]">{shortTx(finishResult.txHash)}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <p className="font-sans text-xs text-textsecondary">
+                  {finishResult.status === 'completed'
+                    ? 'Done. The unused part of your deposit was released to your wallet.'
+                    : 'The refund is being processed in the background.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowCompleteConfirm(false)}
+                  className="w-full py-3.5 rounded-full bg-primaryviolet text-white font-bold text-xs uppercase tracking-wider hover:bg-primaryviolet-hover transition-all min-h-[44px]"
+                >
+                  CLOSE
+                </button>
+              </div>
+            )}
 
-      {/* Balance + data stream */}
-      <section className="panel mt-5 overflow-hidden p-4" aria-label="Balance">
-        <div className="grid grid-cols-[1fr_auto] items-end gap-4">
-          <div>
-            <div className="field-label">Balance</div>
-            <div className="tabular mt-1 font-display text-5xl font-bold leading-none">
-              {mission.balanceUsdc.toFixed(2)}
-              <span className="ml-1.5 text-lg text-ink-muted">USDC</span>
-            </div>
-            <div className="mt-2 font-mono text-xs text-ink-faint">
-              {pct}% of {mission.budgetUsdc.toFixed(2)} USDC · ≈ {fmtMb(mbLeft)} left
-            </div>
+            {error && (
+              <div role="alert" className="p-3 rounded-xl bg-alerta/10 border border-alerta/30 font-mono text-xs text-alerta">
+                {error}
+              </div>
+            )}
           </div>
-          <DataStreamMeter level={level} pulseKey={pulseKey} className="h-28 w-24" />
         </div>
-      </section>
+      )}
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <Stat label="Used" value={fmtMb(mission.consumedMb)} />
-        <Stat label="Spent" value={`$${mission.consumedUsdc.toFixed(2)}`} tone="text-signal" />
-        <Stat label="Daily cap" value={`$${mission.dailyLimitUsdc.toFixed(2)}`} />
+      {/* 1. Status */}
+      <div className={`flex flex-wrap items-center justify-between gap-4 mb-6 p-4 sm:p-5 rounded-2xl ${CARD}`}>
+        <div className="flex items-center gap-3">
+          <span className={`w-3 h-3 rounded-full ${statusDot}`} />
+          <div>
+            <span className={`font-mono text-xs font-bold tracking-wider uppercase ${statusColor}`}>{statusLabel}</span>
+            <p className="font-mono text-xs text-textsecondary mt-0.5">
+              {mission.destination.flag} {mission.destination.name} · {mission.destination.coverage}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 font-mono text-xs text-textsecondary">
+          <span>
+            {fmtDate(mission.startDate)} → {fmtDate(mission.endDate)}
+          </span>
+          <span className="hidden sm:inline uppercase">{networkLabel}</span>
+        </div>
       </div>
 
-      {travelerSigns && !isCompleted && (
-        <p className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-signal/30 bg-signal-dim p-3 text-sm">
-          <span className="flex items-center gap-2 text-ink-muted">
-            <span className="material-symbols-outlined text-[18px] text-signal">verified_user</span>
-            Authorized by this app
+      {/* 2. Balance */}
+      <div className={`p-6 rounded-3xl mb-6 flex flex-col gap-4 shadow-[0_0_50px_rgba(123,92,255,0.15)] ${CARD}`}>
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-xs font-bold text-textsecondary tracking-widest uppercase">BALANCE</span>
+          <span className="px-2.5 py-1 rounded-full text-xs font-mono font-bold bg-primaryviolet-light text-[#B9A6FF] border border-primaryviolet/30">
+            {pctRemaining.toFixed(0)}% LEFT
           </span>
-          <span className="tabular font-mono font-semibold text-signal">{(authorizedUsdc ?? 0).toFixed(2)} USDC</span>
-        </p>
-      )}
+        </div>
 
-      <p className="mt-3 flex gap-2 rounded-xl border border-line p-3 text-sm text-ink-muted">
-        <span className="material-symbols-outlined text-[18px] text-orbit">tips_and_updates</span>
-        {note}
-      </p>
+        <div className="flex items-baseline gap-2">
+          <span className="font-display text-4xl sm:text-5xl font-bold text-textprimary tracking-tight text-glow">{fmtUsdc(mission.balanceUsdc, 2)}</span>
+          <span className="font-mono text-lg font-bold text-[#B9A6FF]">USDC</span>
+        </div>
 
-      {/* Actions */}
-      {!isCompleted && (
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <button type="button" onClick={() => setShowTopUp(true)} disabled={actionLoading} className="btn-primary">
-            <span className="material-symbols-outlined text-[20px]">add_circle</span>
-            Top up
+        <div className="h-3 bg-cardborder rounded-full overflow-hidden my-1">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-primaryviolet via-tealbrand to-starlight shadow-[0_0_14px_rgba(47,208,221,0.6)] transition-all duration-500"
+            style={{ width: `${pctRemaining}%` }}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 pt-2 border-t border-cardborder/60 font-mono text-xs">
+          <div>
+            <span className="text-textsecondary text-[10px] block uppercase">SPENT</span>
+            <span className="font-bold text-textprimary">{fmtUsdc(mission.consumedUsdc, 2)} USDC</span>
+          </div>
+          <div className="text-right">
+            <span className="text-textsecondary text-[10px] block uppercase">TOTAL DEPOSIT</span>
+            <span className="font-bold text-textprimary">{fmtUsdc(mission.budgetUsdc, 2)} USDC</span>
+          </div>
+        </div>
+
+        {travelerSigns && !isCompleted && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-online/30 bg-online/10 p-3">
+            <span className="flex items-center gap-2 text-xs text-textsecondary">
+              <span className="material-symbols-outlined text-base text-online">verified_user</span>
+              Authorized by this app
+            </span>
+            <span className="font-mono text-sm font-bold text-online">{fmtUsdc(authorizedUsdc ?? 0, 2)} USDC</span>
+          </div>
+        )}
+      </div>
+
+      {/* 3. Metrics */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <MetricCard label="DATA USED" value={fmtMb(mission.consumedMb)} icon="wifi_tethering" iconColor="text-[#B9A6FF]" />
+        <MetricCard label="DATA LEFT" value={`≈ ${fmtMb(mbLeft)}`} icon="signal_cellular_alt" iconColor="text-tealbrand" />
+        <MetricCard label="DAILY LIMIT" value={`${fmtUsdc(mission.dailyLimitUsdc, 2)} USDC`} icon="timelapse" iconColor="text-starlight" />
+        <MetricCard label="CARRIER" value={isDemoMode || mission.isMock !== false ? 'Citrus (sim)' : 'Citrus Mobile'} icon="sim_card" iconColor="text-online" />
+      </div>
+
+      {/* 4. Quick actions */}
+      {!isCompleted && !isClosing && (
+        <div className="grid grid-cols-2 gap-3 mb-2">
+          <button
+            type="button"
+            disabled={actionLoading}
+            onClick={() => setShowTopUp(true)}
+            className="py-3.5 px-4 rounded-2xl bg-primaryviolet text-white font-sans font-bold text-xs uppercase tracking-wider shadow-[0_0_22px_rgba(123,92,255,0.5)] hover:bg-primaryviolet-hover transition-all flex items-center justify-center gap-2 min-h-[48px]"
+          >
+            <span className="material-symbols-outlined text-base">add_circle</span>
+            TOP UP
           </button>
-          <button type="button" onClick={() => void togglePause()} disabled={actionLoading} className="btn-ghost">
-            <span className="material-symbols-outlined text-[20px]">{isPaused ? 'play_arrow' : 'pause'}</span>
-            {isPaused ? 'Resume data' : 'Pause data'}
+
+          <button
+            type="button"
+            disabled={actionLoading}
+            onClick={() => void togglePause()}
+            className={`py-3.5 px-4 rounded-2xl font-sans font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 min-h-[48px] border-2 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed ${
+              isPaused
+                ? 'border-online bg-online/15 text-online hover:bg-online/25'
+                : 'border-amber-400/70 bg-amber-400/10 text-amber-300 hover:bg-amber-400/20'
+            }`}
+          >
+            <span className={`material-symbols-outlined text-base ${actionLoading ? 'animate-spin' : ''}`}>
+              {actionLoading ? 'refresh' : isPaused ? 'play_circle' : 'pause_circle'}
+            </span>
+            {isPaused ? 'RESUME' : 'PAUSE DATA'}
           </button>
-          <button type="button" onClick={() => navigate('/mission/esim')} className="btn-ghost">
-            <span className="material-symbols-outlined text-[20px]">qr_code_2</span>
-            eSIM
+
+          <button
+            type="button"
+            onClick={() => navigate('/mission/esim')}
+            className="py-3.5 px-4 rounded-2xl border border-cardborder bg-cardbg text-textprimary font-sans font-bold text-xs uppercase tracking-wider hover:border-primaryviolet/50 transition-all flex items-center justify-center gap-2 min-h-[48px]"
+          >
+            <span className="material-symbols-outlined text-base">qr_code_2</span>
+            VIEW eSIM
           </button>
-          <button type="button" onClick={() => void handleSimulate()} disabled={isPaused || actionLoading} className="btn-ghost">
-            <span className="material-symbols-outlined text-[20px]">bolt</span>
-            Use {DEMO_TRAFFIC_MB} MB
+
+          <button
+            type="button"
+            disabled={isPaused || actionLoading}
+            onClick={() => void handleSimulate()}
+            className="py-3.5 px-4 rounded-2xl border border-tealbrand/40 bg-tealbrand/10 text-tealbrand font-sans font-bold text-xs uppercase tracking-wider hover:bg-tealbrand/20 hover:shadow-[0_0_18px_rgba(47,208,221,0.35)] disabled:opacity-40 transition-all flex items-center justify-center gap-2 min-h-[48px]"
+          >
+            <span className="material-symbols-outlined text-base">bolt</span>
+            USE {DEMO_TRAFFIC_MB} MB
           </button>
         </div>
       )}
-      {!isCompleted && (
-        <p className="mt-2 text-center font-mono text-[11px] text-ink-faint">
+      {!isCompleted && !isClosing && (
+        <p className="mb-6 text-center font-mono text-[10px] text-textsecondary/70">
           “Use {DEMO_TRAFFIC_MB} MB” simulates a reading from the carrier.
           {travelerSigns && ' The app signs a voucher for it first, with no wallet popup.'}
         </p>
       )}
 
-      {error && (
-        <p role="alert" className="mt-4 rounded-xl border border-alert/40 bg-alert/10 p-3 text-sm text-alert">
+      {error && !showCompleteConfirm && (
+        <div role="alert" className="mb-6 p-3 rounded-xl bg-alerta/10 border border-alerta/30 font-mono text-xs text-alerta">
           {error}
-        </p>
-      )}
-
-      {/* Activity */}
-      <section id="activity-feed" className="panel mt-6 scroll-mt-24 p-4" aria-labelledby="activity-title">
-        <div className="flex items-center justify-between">
-          <h2 id="activity-title" className="font-display font-semibold">
-            Activity
-          </h2>
-          <span className="chip py-1">{events.length} events</span>
-        </div>
-        <div className="mt-2">
-          <ActivityFeed events={events} />
-        </div>
-      </section>
-
-      {/* Technical details */}
-      <section className="panel mt-4 p-4">
-        <button type="button" onClick={() => setShowTech(!showTech)} aria-expanded={showTech} className="flex w-full items-center justify-between text-sm font-semibold">
-          Payment channel details
-          <span className="material-symbols-outlined text-[20px] text-ink-faint">{showTech ? 'expand_less' : 'expand_more'}</span>
-        </button>
-        {showTech && (
-          <dl className="mt-2 divide-y divide-line">
-            <TechRow label="Payments" value={caps?.paymentRail ?? (isDemoMode ? 'Offline demo' : '—')} />
-            <TechRow label="Network" value={caps?.network ?? mission.network} />
-            <TechRow label="Channel" value={mission.channelId || 'pending'} />
-            {mission.depositTxHash && <TechRow label="Deposit tx" value={mission.depositTxHash} href={mission.depositExplorerUrl} />}
-            {travelerSigns && <TechRow label="Vouchers" value={`signed in this browser · ${(authorizedUsdc ?? 0).toFixed(2)} USDC authorized`} />}
-            <TechRow label="eSIM" value={`${mission.esimStatus} · ${mission.iccid ?? mission.esim?.iccid ?? '—'}`} />
-            <TechRow label="Carrier" value={mission.esim?.isMock === false ? 'Citrus Mobile' : 'Citrus Mobile (simulated)'} />
-          </dl>
-        )}
-      </section>
-
-      {!isCompleted ? (
-        <button type="button" onClick={() => setShowFinish(true)} disabled={actionLoading} className="mt-6 w-full rounded-full py-3 text-sm font-semibold text-alert hover:bg-alert/10">
-          End trip and get the rest back
-        </button>
-      ) : (
-        <div className="mt-6 grid grid-cols-2 gap-2">
-          <button type="button" onClick={() => navigate('/mission/new')} className="btn-primary">
-            New trip
-          </button>
-          <button type="button" onClick={() => { reset(); navigate('/', { replace: true }) }} className="btn-ghost">
-            {isDemoMode ? 'Reset demo' : 'Done'}
-          </button>
         </div>
       )}
 
-      {/* End trip */}
-      {showFinish && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-labelledby="finish-title">
-          <button type="button" aria-label="Close" className="absolute inset-0 bg-space-950/80 backdrop-blur-sm" onClick={() => !actionLoading && setShowFinish(false)} />
-          <div className="pb-safe relative w-full max-w-lg rounded-t-3xl border border-line bg-space-900 p-6 sm:rounded-3xl">
-            {!finishResult ? (
-              <>
-                <h2 id="finish-title" className="font-display text-xl font-bold">
-                  End this trip?
-                </h2>
-                <p className="mt-2 text-sm text-ink-muted">
-                  Your eSIM&apos;s data stops, the latest voucher settles what you used, and the payment channel returns the
-                  rest of your deposit — about <strong className="text-ink">{mission.balanceUsdc.toFixed(2)} USDC</strong> — to your wallet.
-                  {simulated && ' (Simulated.)'}
-                </p>
-                <div className="mt-6 grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => setShowFinish(false)} disabled={actionLoading} className="btn-ghost">
-                    Keep browsing
-                  </button>
-                  <button type="button" onClick={() => void handleFinish()} disabled={actionLoading} className="btn-primary">
-                    {actionLoading ? 'Settling…' : 'End trip'}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <span className="material-symbols-outlined text-[36px] text-signal">task_alt</span>
-                <h2 id="finish-title" className="mt-2 font-display text-xl font-bold">
-                  Trip settled
-                </h2>
-                <dl className="mt-4 divide-y divide-line rounded-xl border border-line px-4">
-                  <div className="flex justify-between py-3">
-                    <dt className="text-sm text-ink-muted">Paid for data</dt>
-                    <dd className="tabular font-semibold">{(finishResult.settledUsdc ?? mission.consumedUsdc).toFixed(2)} USDC</dd>
-                  </div>
-                  <div className="flex justify-between py-3">
-                    <dt className="text-sm text-ink-muted">Back to your wallet</dt>
-                    <dd className="tabular font-semibold text-signal">{(finishResult.refundedUsdc ?? mission.balanceUsdc).toFixed(2)} USDC</dd>
-                  </div>
-                  {finishResult.txHash && (
-                    <div className="flex justify-between gap-4 py-3">
-                      <dt className="text-sm text-ink-muted">Settlement</dt>
-                      <dd className="font-mono text-xs">
-                        {finishResult.explorerUrl ? (
-                          <a href={finishResult.explorerUrl} target="_blank" rel="noreferrer" className="text-signal hover:underline">
-                            {shortTx(finishResult.txHash)} ↗
-                          </a>
-                        ) : (
-                          shortTx(finishResult.txHash)
-                        )}
-                      </dd>
-                    </div>
-                  )}
-                </dl>
-                <button type="button" onClick={() => setShowFinish(false)} className="btn-primary mt-6 w-full">
-                  Close
-                </button>
-              </>
-            )}
-            {error && (
-              <p role="alert" className="mt-4 rounded-xl border border-alert/40 bg-alert/10 p-3 text-sm text-alert">
-                {error}
-              </p>
-            )}
+      {/* 5. Copilot */}
+      <div className="p-5 rounded-2xl bg-primaryviolet-light border border-primaryviolet/30 flex flex-col gap-3 mb-6">
+        <div className="flex items-center gap-2 text-[#B9A6FF] font-mono text-xs font-bold tracking-wider uppercase">
+          <span className="material-symbols-outlined text-base">smart_toy</span>
+          AI COPILOT
+        </div>
+        <div className="flex items-start gap-3">
+          <div className={`w-10 h-10 shrink-0 animate-float-ship ${flash ? 'scale-125' : ''} transition-transform`}>
+            <img src={shipSrc} alt="" className="w-full h-full object-contain drop-shadow-[0_0_12px_rgba(123,92,255,0.7)]" />
           </div>
+          <p className="text-xs text-textprimary italic leading-relaxed">
+            {isCompleted
+              ? '"Mission complete. The USDC you didn’t use was released to your wallet."'
+              : isClosing
+                ? '"Closing in progress. Settling the final usage."'
+                : isPaused
+                  ? mission.balanceUsdc <= 0
+                    ? '"Your balance is used up, so data is paused. Top up to keep browsing."'
+                    : '"Data is paused. Resume whenever you’re ready."'
+                  : pctRemaining < 20
+                    ? `"Heads up! Less than 20% left — about ${fmtMb(mbLeft)}. Consider topping up."`
+                    : `"You’re on budget. About ${fmtMb(mbLeft)} of data left in ${mission.destination.name}."`}
+          </p>
+        </div>
+      </div>
+
+      {/* 6. Activity */}
+      <div id="activity-feed" className={`scroll-mt-24 rounded-2xl p-5 sm:p-6 flex flex-col gap-4 mb-6 ${CARD}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs font-bold text-textprimary uppercase tracking-widest">ACTIVITY</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primaryviolet-light border border-primaryviolet/30 font-mono text-[9px] font-bold text-[#B9A6FF]">
+              {events.length} OPS
+            </span>
+          </div>
+          <span className="font-mono text-[10px] text-textsecondary">{networkLabel}</span>
+        </div>
+        <ActivityFeed events={events} networkLabel={networkLabel} />
+      </div>
+
+      {/* 7. Technical details */}
+      <div className={`rounded-2xl p-5 mb-6 ${CARD}`}>
+        <button
+          type="button"
+          onClick={() => setShowTechDetails(!showTechDetails)}
+          aria-expanded={showTechDetails}
+          className="w-full flex items-center justify-between font-mono text-xs font-bold text-textsecondary uppercase tracking-widest hover:text-white transition-colors"
+        >
+          <span>TECHNICAL DETAILS</span>
+          <span className="material-symbols-outlined text-base">{showTechDetails ? 'expand_less' : 'expand_more'}</span>
+        </button>
+
+        {showTechDetails && (
+          <div className="mt-4 pt-4 border-t border-cardborder grid grid-cols-2 sm:grid-cols-3 gap-3 font-mono text-[10px]">
+            <TechRow label="PAYMENTS" value={caps?.paymentRail ?? (isDemoMode ? 'Offline demo' : '—')} />
+            <TechRow label="NETWORK" value={caps?.network ?? mission.network} />
+            <TechRow label="CHANNEL" value={mission.channelId || 'PENDING'} />
+            {mission.depositTxHash && <TechRow label="DEPOSIT TX" value={mission.depositTxHash} href={mission.depositExplorerUrl} />}
+            {travelerSigns && <TechRow label="VOUCHERS" value="Signed in this browser" />}
+            <TechRow label="eSIM" value={mission.esimStatus.toUpperCase()} />
+            <TechRow label="CARRIER" value={providerLabel} />
+            <TechRow label="ICCID" value={iccidDisplay} />
+          </div>
+        )}
+      </div>
+
+      {/* 8. End mission */}
+      {!isCompleted && !isClosing && (
+        <div className="pt-2 pb-6 flex justify-center">
+          <button
+            type="button"
+            disabled={actionLoading}
+            onClick={() => {
+              setError(null)
+              setFinishResult(null)
+              setShowCompleteConfirm(true)
+            }}
+            className="w-full sm:w-auto px-8 py-3.5 rounded-full border border-alerta/40 bg-alerta/5 text-alerta font-sans font-bold text-xs uppercase tracking-wider hover:bg-alerta/15 transition-all flex items-center justify-center gap-2 min-h-[48px]"
+          >
+            <span className="material-symbols-outlined text-base">flag</span>
+            END MISSION AND GET THE REST BACK
+          </button>
+        </div>
+      )}
+
+      {/* Completed */}
+      {isCompleted && (
+        <div className="pt-2 pb-6 flex flex-col sm:flex-row gap-3">
+          <button
+            type="button"
+            onClick={() => navigate('/mission/new')}
+            className="flex-1 py-3.5 rounded-full bg-primaryviolet text-white font-sans font-bold text-xs uppercase tracking-wider shadow-[0_0_22px_rgba(123,92,255,0.5)] hover:bg-primaryviolet-hover transition-all min-h-[48px] flex items-center justify-center gap-2"
+          >
+            <span className="material-symbols-outlined text-base">rocket_launch</span>
+            NEW MISSION
+          </button>
+          <button
+            type="button"
+            onClick={handleReset}
+            className="flex-1 py-3.5 rounded-full border border-cardborder bg-warmneutral text-textsecondary font-sans font-semibold text-xs uppercase tracking-wider hover:text-white transition-all min-h-[48px]"
+          >
+            {isDemoMode ? 'RESET DEMO' : 'DONE'}
+          </button>
         </div>
       )}
     </MobileAppShell>
+  )
+}
+
+function MetricCard({ label, value, icon, iconColor }: { label: string; value: string; icon: string; iconColor: string }) {
+  return (
+    <div className={`p-4 rounded-2xl flex flex-col gap-1.5 hover:border-primaryviolet/50 transition-colors ${CARD}`}>
+      <div className="flex items-center gap-1.5">
+        <span className={`material-symbols-outlined text-base ${iconColor}`}>{icon}</span>
+        <span className="font-mono text-[10px] font-bold text-textsecondary uppercase tracking-wider">{label}</span>
+      </div>
+      <span className="font-display text-base sm:text-lg font-bold text-textprimary leading-tight">{value}</span>
+    </div>
+  )
+}
+
+function TechRow({ label, value, href }: { label: string; value: string; href?: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 min-w-0">
+      <span className="text-textsecondary/60 uppercase tracking-wider">{label}</span>
+      {href ? (
+        <a href={href} target="_blank" rel="noreferrer" className="font-bold text-[#B9A6FF] truncate hover:underline">
+          {value} ↗
+        </a>
+      ) : (
+        <span className="font-bold text-textprimary truncate">{value}</span>
+      )}
+    </div>
   )
 }
