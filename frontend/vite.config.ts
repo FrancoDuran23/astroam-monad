@@ -1,12 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { wgslVitePlugin } from '@vgpu/wgsl/loader-vite'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), wgslVitePlugin()],
   server: {
     port: 5173,
-    // El backend sirve la API de misiones bajo /api y /health, /ready en la
-    // raíz: se reenvían tal cual, sin reescribir la ruta.
+    // The backend serves the mission API under /api and /health, /ready at
+    // the root: forward them as they are, without rewriting the path.
     proxy: {
       '/api': { target: 'http://localhost:8080', changeOrigin: true },
       '/health': { target: 'http://localhost:8080', changeOrigin: true },
