@@ -15,6 +15,8 @@ export const REASONS = {
   channel_not_open: { retryable: false, status: 200 },
   stale_reading: { retryable: false, status: 200 },
   amount_rejected: { retryable: false, status: 200 },
+  /** The traveler has not signed a voucher that covers this reading yet. */
+  authorization_required: { retryable: false, status: 200 },
   signer_unavailable: { retryable: true, status: 503 },
   upstream_unavailable: { retryable: true, status: 503 },
   internal_error: { retryable: true, status: 503 },

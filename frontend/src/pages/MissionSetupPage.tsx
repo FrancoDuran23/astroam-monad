@@ -7,6 +7,7 @@ import StepDuration from '../components/mission/StepDuration'
 import StepBudget from '../components/mission/StepBudget'
 import StepConfirm from '../components/mission/StepConfirm'
 import ActivationOverlay from '../components/mission/ActivationOverlay'
+import WalletDeposit from '../components/mission/WalletDeposit'
 import { useMission } from '../hooks/useMission'
 import { addDays, shortTx, today } from '../utils/missionUtils'
 import type { PaymentIntentInfo, WizardData, WizardStep } from '../types/mission'
@@ -31,19 +32,40 @@ const DEFAULT_DATA: WizardData = {
 
 function DepositPanel({
   intent,
+  missionId,
   simulated,
   txHash,
   onTxHash,
   onSubmit,
+  onWalletDeposit,
   busy,
 }: {
   intent: PaymentIntentInfo
+  missionId: string
   simulated: boolean
   txHash: string
   onTxHash: (v: string) => void
   onSubmit: () => void
+  onWalletDeposit: (txHash: string) => Promise<void>
   busy: boolean
 }) {
+  if (intent.evm && !simulated) {
+    return (
+      <div className="flex flex-col gap-5">
+        <div>
+          <span className="eyebrow">Deposit · {intent.evm.chainName}</span>
+          <h2 className="mt-1 font-display text-2xl font-bold">
+            {intent.amount} {intent.asset}
+          </h2>
+          <p className="mt-1 text-sm text-ink-muted">
+            Locked in the AstroAm escrow on Monad. AstroAm can only take what you use, signed by this app; the rest comes back when you finish.
+          </p>
+        </div>
+        <WalletDeposit missionId={missionId} plan={intent.evm} onDeposited={onWalletDeposit} label={`Pay ${intent.amount} USDC with wallet`} />
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-3">
@@ -100,7 +122,7 @@ function DepositPanel({
 
 export default function MissionSetupPage() {
   const navigate = useNavigate()
-  const { createMission, createPaymentIntent, confirmPayment, activate, backendError, retryBackend, isDemoMode, caps } = useMission()
+  const { mission, createMission, createPaymentIntent, confirmPayment, activate, backendError, retryBackend, isDemoMode, caps } = useMission()
 
   const [step, setStep] = useState<WizardStep>(1)
   const [data, setData] = useState<WizardData>(DEFAULT_DATA)
@@ -176,6 +198,21 @@ export default function MissionSetupPage() {
     }
   }
 
+  // Monad: the wallet already sent the deposit; errors surface in the panel.
+  async function handleWalletDeposit(txHash: string) {
+    if (!paymentIntent) return
+    const res = await confirmPayment(paymentIntent.intentId, txHash)
+    if (!res.valid) throw new Error('The deposit was not accepted.')
+    setPaymentIntent(null)
+    setActivating(true)
+    try {
+      await activate()
+    } catch (e) {
+      setActivating(false)
+      setError(e instanceof Error ? e.message : 'Could not activate the eSIM')
+    }
+  }
+
   return (
     <MobileAppShell title="New trip" showBack showBottomNav={false}>
       {activating && <ActivationOverlay simulated={simulated} onComplete={() => navigate('/mission/esim')} />}
@@ -201,10 +238,12 @@ export default function MissionSetupPage() {
         {paymentIntent ? (
           <DepositPanel
             intent={paymentIntent}
+            missionId={mission?.id ?? ''}
             simulated={simulated}
             txHash={txHashInput}
             onTxHash={setTxHashInput}
             onSubmit={() => void handleConfirmPayment()}
+            onWalletDeposit={handleWalletDeposit}
             busy={paymentValidating}
           />
         ) : (

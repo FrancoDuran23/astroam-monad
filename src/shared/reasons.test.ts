@@ -30,6 +30,7 @@ test("FT-R6 exact mapping table", () => {
     channel_not_open: { retryable: false, status: 200 },
     stale_reading: { retryable: false, status: 200 },
     amount_rejected: { retryable: false, status: 200 },
+    authorization_required: { retryable: false, status: 200 },
     signer_unavailable: { retryable: true, status: 503 },
     upstream_unavailable: { retryable: true, status: 503 },
     internal_error: { retryable: true, status: 503 },

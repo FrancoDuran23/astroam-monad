@@ -79,6 +79,8 @@ export type Capabilities = {
   paymentRail: string
   /** false while payments are simulated (FakeRail). */
   paymentsLive: boolean
+  /** "traveler": the app signs vouchers with a session key (Monad). */
+  voucherSigning: 'rail' | 'traveler'
   channelReady: boolean
   citrusReady: boolean
   connectivityProvider: 'fake' | 'citrus'

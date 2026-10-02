@@ -5,8 +5,7 @@ import {
   paymentConfirmationSchema,
   topupIntentSchema,
   topupConfirmationSchema,
-  demoTrafficSchema,
-} from '../schemas/mission.ts'
+  demoTrafficSchema, authorizationSchema } from '../schemas/mission.ts'
 
 function getId(req: Request): string {
   const raw = req.params.id
@@ -183,6 +182,24 @@ export function createProductRouter(service: MissionProductService): Router {
   })
 
   // 11. Finish Mission
+  // Usage authorization: vouchers signed by the traveler's app (session key)
+  router.get('/missions/:id/authorization', async (req: Request, res: Response) => {
+    try {
+      res.json(await service.getAuthorization(getId(req)))
+    } catch (err) {
+      res.status(400).json({ error: 'authorization_error', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  router.post('/missions/:id/authorizations', requireAuthIfNeeded, async (req: Request, res: Response) => {
+    try {
+      const parsed = authorizationSchema.parse(req.body)
+      res.json(await service.authorizeUsage(getId(req), parsed.cumulativeAmount, parsed.signature))
+    } catch (err) {
+      res.status(400).json({ error: 'authorization_rejected', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
   router.post('/missions/:id/finish', requireAuthIfNeeded, async (req: Request, res: Response) => {
     try {
       const result = await service.finishMission(getId(req))

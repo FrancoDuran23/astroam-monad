@@ -29,7 +29,7 @@ Built for **Monad Metropolis 2026** (track: Consumer Products & Payments) by
 | Part | State |
 |---|---|
 | App (landing + trip flow), mission API, metering, cutoff policy, vouchers | **Working**, end to end, with simulated payments and a simulated eSIM |
-| Payment channel on Monad (contract + rail) | **In progress** — the app runs on `FakeRail` until it lands |
+| Payment channel on Monad: `AstroAmEscrow` contract, `MonadRail`, wallet flow in the app | **Implemented and tested on a local chain** (Foundry + anvil end to end). **Not yet deployed to Monad testnet**: needs a funded deployer (see below). Default stays `PAYMENT_RAIL=fake` |
 | Citrus Mobile eSIM provider | Implemented, **not yet tested against the real API** (no sandbox; needs a funded reseller account) |
 
 Everything simulated is labeled in the UI ("Simulated payments", "Simulated QR").
@@ -42,25 +42,32 @@ This repository starts from AstroAm's base built for another hackathon
 Everything after it is new work for Metropolis: Stellar was removed, payments
 were moved behind a chain-agnostic `PaymentRail`, the frontend was redesigned
 (WebGPU shaders with [vgpu](https://github.com/vercel-labs/vgpu)), and the
-Monad payment channel is being added.
+Monad payment channel was added (`contracts/`, `src/rails/MonadRail.ts`,
+`frontend/src/chain/monad.ts`).
 
 ## How it works
 
 1. **Pick a destination and a budget.** Each country has its own per-MB rate,
    shown up front (Brazil: 0.0025 USDC/MB, so 5 USDC ≈ 2 GB).
-2. **Deposit USDC.** It goes into a one-way payment channel, not to us. Only a
-   signed voucher can move it.
+2. **Deposit USDC.** From your wallet into the `AstroAmEscrow` contract on
+   Monad, not to us. The deposit also registers a session key that this app
+   generated in your browser.
 3. **Install the eSIM.** One QR or LPA code; it stays on the phone for the next trip.
-4. **Browse.** Each usage reading from the carrier gets a voucher for the
-   running total. If the deposit can't cover a reading, the voucher is refused
-   (`channel_exhausted`) and data pauses.
-5. **End the trip.** One transaction settles the latest voucher and refunds the rest.
+4. **Browse.** The app signs EIP-712 vouchers with the session key for the
+   running total it lets AstroAm charge, a little ahead of usage: no wallet
+   popup per MB, nothing on-chain per MB. Data is credited only up to the
+   latest voucher (`authorization_required` otherwise); if the deposit can't
+   cover a reading, data pauses (`channel_exhausted`).
+5. **End the trip.** AstroAm closes the escrow in one transaction: it receives
+   what was actually used, never more than the latest voucher, and the rest
+   goes back to your wallet. If AstroAm never closes, you take everything back
+   with `refund()` after 30 days.
 
 ## Architecture
 
 ```
 src/
-  rails/        PaymentRail port + FakeRail (in-memory); the Monad rail goes here
+  rails/        PaymentRail port, FakeRail (in-memory) and MonadRail (viem)
   product/      mission API used by the app (/api/missions …)
   meter/        meter: asks for a voucher per reading, credits data only when signed
   services/     cutoff policy, eSIM wallet funding, session close, Citrus webhooks
@@ -69,8 +76,27 @@ src/
   persistence/  eSIM records and webhook log (JSON files)
   shared/       money math (BigInt), voucher message schemas, retries, network ids
   server/       HTTP app: /health, /ready, /api, /citrus/webhooks
-frontend/       React + Vite + Tailwind; WebGPU shaders in frontend/src/gpu
+contracts/      AstroAmEscrow.sol + Foundry tests
+scripts/        deploy-monad-escrow.ts
+frontend/       React + Vite + Tailwind; WebGPU shaders in frontend/src/gpu,
+                wallet + session-key vouchers in frontend/src/chain/monad.ts
 ```
+
+### The Monad escrow
+
+`contracts/src/AstroAmEscrow.sol`, USDC with 6 decimals
+(Circle, `0x534b2f3A21130d7a60830c2Df862319e593943A3` on Monad testnet):
+
+| Call | Who | What |
+|---|---|---|
+| `deposit(escrowId, amount, signer)` | traveler | Locks USDC and registers the app's session key |
+| `topUp(escrowId, amount)` | traveler | Adds USDC to the same escrow |
+| `close(escrowId, voucherAmount, signature, settleAmount)` | AstroAm (payee) | Pays `settleAmount` (usage, ≤ the signed voucher) and refunds the rest |
+| `refund(escrowId)` | anyone, after the timeout | Returns the whole deposit to the traveler |
+
+Vouchers are EIP-712 `Voucher(bytes32 escrowId, uint256 cumulativeAmount)`,
+signed by the session key or the traveler's wallet. The API keeps the highest
+one per escrow (`DATA_DIR/monad-vouchers-<escrow>.json`).
 
 `PaymentRail` (`src/rails/PaymentRail.ts`) is the only place that knows about
 a chain: create a deposit intent, confirm it (the deposit opens the channel),
@@ -114,7 +140,20 @@ Leave `frontend/.env` out: Vite proxies `/api` to the backend. On the trip
 screen, **Use 250 MB** simulates a carrier reading (5 USDC in Brazil runs out
 after 8).
 
-Checks: `npm test` and `npm run check` (backend), `npm test` and `npx tsc --noEmit` (frontend).
+Checks: `npm test` and `npm run check` (backend), `npm test` and `npx tsc --noEmit` (frontend),
+`npm run contracts:test` (Foundry). With Foundry installed, `npm test` also runs
+`src/rails/MonadRail.anvil.test.ts`: deploy on anvil, deposit, vouchers,
+metering, close, balances.
+
+### On Monad testnet
+
+1. Get MON for gas at [faucet.monad.xyz](https://faucet.monad.xyz) (deployer/payee account)
+   and test USDC at [faucet.circle.com](https://faucet.circle.com) (traveler wallet).
+2. Deploy: `MONAD_DEPLOYER_PRIVATE_KEY=0x… npm run monad:deploy`. The deployer is the payee
+   by default.
+3. In `.env`: `PAYMENT_RAIL=monad`, `MONAD_ESCROW_ADDRESS=<printed>`,
+   `MONAD_PAYEE_PRIVATE_KEY=<payee key>`. Restart the API.
+4. In the app, the deposit and top-up buttons open MetaMask or Rabby on Monad testnet.
 
 ## Risks, stated plainly
 
@@ -125,6 +164,9 @@ Checks: `npm test` and `npm run check` (backend), `npm test` and `npx tsc --noEm
   paying in USDC without a card and on the automatic refund, not on price.
 - **~10 minutes between usage and voucher.** Bounded by the eSIM's prepaid wallet.
 - **No audit** of the code or the contract.
+- **The session key lives in the browser** (localStorage). Whoever has it can
+  authorize charges up to the deposit; clearing the browser loses it, and then
+  the trip can only be settled up to the last voucher (the rest is refunded).
 
 ## Documents
 

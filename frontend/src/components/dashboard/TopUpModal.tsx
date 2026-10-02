@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMission } from '../../hooks/useMission'
+import WalletDeposit from '../mission/WalletDeposit'
 import type { PaymentIntentInfo } from '../../types/mission'
 
 type Props = {
@@ -7,7 +8,7 @@ type Props = {
 }
 
 export default function TopUpModal({ onClose }: Props) {
-  const { isDemoMode, caps, createTopUpIntent, confirmTopUpPayment, actionLoading } = useMission()
+  const { mission, isDemoMode, caps, createTopUpIntent, confirmTopUpPayment, actionLoading } = useMission()
   const [amount, setAmount] = useState(5)
   const [intent, setIntent] = useState<PaymentIntentInfo | null>(null)
   const [txHash, setTxHash] = useState('')
@@ -86,6 +87,18 @@ export default function TopUpModal({ onClose }: Props) {
               {simulated ? `Simulate ${amount.toFixed(2)} USDC deposit` : 'Continue'}
             </button>
           </>
+        ) : intent.evm && !simulated && mission ? (
+          <div className="mt-6">
+            <WalletDeposit
+              missionId={mission.id}
+              plan={intent.evm}
+              label={`Add ${amount.toFixed(2)} USDC with wallet`}
+              onDeposited={async (hash) => {
+                await confirmTopUpPayment(intent.intentId, hash, amount)
+                onClose()
+              }}
+            />
+          </div>
         ) : (
           <div className="mt-6 flex flex-col gap-4">
             {intent.qr && (

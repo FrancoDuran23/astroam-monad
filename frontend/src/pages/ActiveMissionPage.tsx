@@ -17,18 +17,27 @@ function Stat({ label, value, tone = '' }: { label: string; value: string; tone?
   )
 }
 
-function TechRow({ label, value }: { label: string; value: string }) {
+function TechRow({ label, value, href }: { label: string; value: string; href?: string }) {
   return (
     <div className="flex items-start justify-between gap-4 py-2">
       <dt className="field-label">{label}</dt>
-      <dd className="break-all text-right font-mono text-xs text-ink-muted">{value}</dd>
+      <dd className="break-all text-right font-mono text-xs text-ink-muted">
+        {href ? (
+          <a href={href} target="_blank" rel="noreferrer" className="text-signal hover:underline">
+            {value} ↗
+          </a>
+        ) : (
+          value
+        )}
+      </dd>
     </div>
   )
 }
 
 export default function ActiveMissionPage() {
   const navigate = useNavigate()
-  const { mission, events, caps, loading, actionLoading, isDemoMode, simulate, togglePause, finish, reset } = useMission()
+  const { mission, events, caps, loading, actionLoading, isDemoMode, travelerSigns, authorizedUsdc, retryBackend, simulate, togglePause, finish, reset } =
+    useMission()
 
   const [showTopUp, setShowTopUp] = useState(false)
   const [showFinish, setShowFinish] = useState(false)
@@ -91,7 +100,7 @@ export default function ActiveMissionPage() {
       onActivityClick={() => document.getElementById('activity-feed')?.scrollIntoView({ behavior: 'smooth' })}
       showBottomNav={!showFinish}
     >
-      {showTopUp && <TopUpModal onClose={() => setShowTopUp(false)} />}
+      {showTopUp && <TopUpModal onClose={() => { setShowTopUp(false); void retryBackend() }} />}
 
       {/* Status */}
       <div className="flex items-start justify-between gap-3">
@@ -132,6 +141,16 @@ export default function ActiveMissionPage() {
         <Stat label="Daily cap" value={`$${mission.dailyLimitUsdc.toFixed(2)}`} />
       </div>
 
+      {travelerSigns && !isCompleted && (
+        <p className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-signal/30 bg-signal-dim p-3 text-sm">
+          <span className="flex items-center gap-2 text-ink-muted">
+            <span className="material-symbols-outlined text-[18px] text-signal">verified_user</span>
+            Authorized by this app
+          </span>
+          <span className="tabular font-mono font-semibold text-signal">{(authorizedUsdc ?? 0).toFixed(2)} USDC</span>
+        </p>
+      )}
+
       <p className="mt-3 flex gap-2 rounded-xl border border-line p-3 text-sm text-ink-muted">
         <span className="material-symbols-outlined text-[18px] text-orbit">tips_and_updates</span>
         {note}
@@ -158,7 +177,12 @@ export default function ActiveMissionPage() {
           </button>
         </div>
       )}
-      {!isCompleted && <p className="mt-2 text-center font-mono text-[11px] text-ink-faint">“Use {DEMO_TRAFFIC_MB} MB” simulates a reading from the carrier.</p>}
+      {!isCompleted && (
+        <p className="mt-2 text-center font-mono text-[11px] text-ink-faint">
+          “Use {DEMO_TRAFFIC_MB} MB” simulates a reading from the carrier.
+          {travelerSigns && ' The app signs a voucher for it first, with no wallet popup.'}
+        </p>
+      )}
 
       {error && (
         <p role="alert" className="mt-4 rounded-xl border border-alert/40 bg-alert/10 p-3 text-sm text-alert">
@@ -190,7 +214,8 @@ export default function ActiveMissionPage() {
             <TechRow label="Payments" value={caps?.paymentRail ?? (isDemoMode ? 'Offline demo' : '—')} />
             <TechRow label="Network" value={caps?.network ?? mission.network} />
             <TechRow label="Channel" value={mission.channelId || 'pending'} />
-            {mission.depositTxHash && <TechRow label="Deposit tx" value={mission.depositTxHash} />}
+            {mission.depositTxHash && <TechRow label="Deposit tx" value={mission.depositTxHash} href={mission.depositExplorerUrl} />}
+            {travelerSigns && <TechRow label="Vouchers" value={`signed in this browser · ${(authorizedUsdc ?? 0).toFixed(2)} USDC authorized`} />}
             <TechRow label="eSIM" value={`${mission.esimStatus} · ${mission.iccid ?? mission.esim?.iccid ?? '—'}`} />
             <TechRow label="Carrier" value={mission.esim?.isMock === false ? 'Citrus Mobile' : 'Citrus Mobile (simulated)'} />
           </dl>
