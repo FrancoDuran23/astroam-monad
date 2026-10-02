@@ -89,7 +89,7 @@ export class ApiMissionService {
       consumedUsdc: 0,
       consumedMb: 0,
       esimStatus: 'not_provisioned',
-      network: 'stellar:testnet',
+      network: 'monad:testnet',
       channelId: '',
       createdAt: new Date().toISOString(),
     }
@@ -106,12 +106,12 @@ export class ApiMissionService {
     return handleResponse<PaymentIntentInfo>(res)
   }
 
-  async confirmPayment(missionId: string, intentId: string, txHash: string): Promise<PaymentConfirmationResult> {
+  async confirmPayment(missionId: string, intentId: string, txHash: string, traveler?: string): Promise<PaymentConfirmationResult> {
     const res = await fetch(`${this.baseUrl}/missions/${missionId}/payment-confirmation`, {
       method: 'POST',
       headers: getAuthHeaders(),
       credentials: 'include',
-      body: JSON.stringify({ intentId, txHash }),
+      body: JSON.stringify({ intentId, txHash, traveler }),
     })
     return handleResponse<PaymentConfirmationResult>(res)
   }
@@ -192,6 +192,16 @@ export class ApiMissionService {
       method: 'POST',
       headers: getAuthHeaders(),
       credentials: 'include',
+    })
+    return handleResponse<FinishResult>(res)
+  }
+
+  async confirmClose(missionId: string, txHash: string, settlement: 'close' | 'timeout_refund' = 'close'): Promise<FinishResult> {
+    const res = await fetch(`${this.baseUrl}/missions/${missionId}/close-confirmation`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      body: JSON.stringify({ txHash, settlement }),
     })
     return handleResponse<FinishResult>(res)
   }

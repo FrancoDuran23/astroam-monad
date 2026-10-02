@@ -30,7 +30,7 @@ export default function Hero() {
 
           {/* Subtitle */}
           <p className="text-lg md:text-xl text-textsecondary max-w-xl font-normal leading-relaxed">
-            Viajá conectado y pagá únicamente por los datos que realmente consumís. Sin contratos rígidos ni paquetes inflados. Tu conexión fluye con la velocidad y economía de la red Stellar.
+            Viajá conectado y pagá únicamente por los datos que realmente consumís. Depositás USDC de prueba en Monad; lo que no usás vuelve al cerrar.
           </p>
 
           {/* CTA buttons */}
@@ -58,7 +58,7 @@ export default function Hero() {
                 <span className="font-mono text-[11px] font-bold text-primaryviolet tracking-wider uppercase">01 // TARIFA</span>
               </div>
               <span className="font-display text-base font-bold text-textprimary mt-1">Pago por consumo</span>
-              <span className="text-xs text-textsecondary">Fraccionado por cada MB</span>
+              <span className="text-xs text-textsecondary">Medido por MB, cobrado al cierre</span>
             </div>
             <div className="flex flex-col gap-1 p-4 rounded-2xl bg-white border border-cardborder shadow-sm">
               <div className="flex items-center gap-2">
@@ -90,7 +90,7 @@ export default function Hero() {
                 <span className="font-mono text-xs font-bold text-textprimary uppercase tracking-wider">CONEXIÓN LISTA</span>
               </div>
               <span className="px-3 py-1 rounded-full bg-primaryviolet-light text-primaryviolet font-mono text-[11px] font-semibold tracking-wide">
-                Liquidación en Stellar
+                Cierre en Monad
               </span>
             </div>
 

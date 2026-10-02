@@ -59,7 +59,7 @@ export default function ActivityFeed({ events }: Props) {
                   {ev.txId.slice(0, 12)}…
                 </span>
                 <span className="inline-flex items-center gap-0.5 font-mono text-[9px] text-primaryviolet font-medium">
-                  Stellar Testnet (Simulado)
+                  Off-chain · Monad Testnet
                 </span>
               </div>
             </div>

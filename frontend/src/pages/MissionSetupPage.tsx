@@ -10,6 +10,7 @@ import ActivationOverlay from '../components/mission/ActivationOverlay'
 import { useMission } from '../hooks/useMission'
 import { addDays, today } from '../utils/missionUtils'
 import type { PaymentIntentInfo, WizardData, WizardStep } from '../types/mission'
+import { connectMonadWallet, depositUsdc, monadTxUrl, walletError } from '../chain/monad'
 
 const STEP_LABELS = ['DESTINO', 'DURACIÓN', 'PRESUPUESTO', 'CONFIRMAR']
 
@@ -43,7 +44,8 @@ export default function MissionSetupPage() {
 
   // API Payment flow state
   const [paymentIntent, setPaymentIntent] = useState<PaymentIntentInfo | null>(null)
-  const [txHashInput, setTxHashInput] = useState('')
+  const [walletAddress, setWalletAddress] = useState<string | null>(null)
+  const [depositTx, setDepositTx] = useState<string | null>(null)
   const [paymentValidating, setPaymentValidating] = useState(false)
 
   function update(field: string, value: unknown) {
@@ -99,22 +101,33 @@ export default function MissionSetupPage() {
     }
   }
 
-  async function handleConfirmPaymentSubmit() {
-    if (!paymentIntent) return
+  async function handleConnectWallet() {
+    setError(null)
+    try {
+      const account = await connectMonadWallet()
+      setWalletAddress(account)
+    } catch (e) {
+      setError(walletError(e))
+    }
+  }
+
+  async function handleDeposit() {
+    if (!paymentIntent?.monad) return
     setError(null)
     setPaymentValidating(true)
     try {
-      const txHash = txHashInput.trim() || `tx_${Date.now().toString(16)}`
-      const res = await confirmPayment(paymentIntent.intentId, txHash)
+      const { hash, traveler } = await depositUsdc(paymentIntent.monad)
+      setDepositTx(hash)
+      const res = await confirmPayment(paymentIntent.intentId, hash, traveler)
       if (res.valid) {
         setPaymentIntent(null)
         setActivating(true)
         await activate()
       } else {
-        setError('El pago no ha sido validado correctamente por el servidor.')
+        setError('El servidor no registró el depósito.')
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al confirmar pago')
+      setError(walletError(e))
     } finally {
       setPaymentValidating(false)
     }
@@ -216,83 +229,74 @@ export default function MissionSetupPage() {
         )}
 
         {/* Payment Intent Modal / Section in API mode */}
-        {paymentIntent && (
-          <div className="flex flex-col gap-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cardborder pb-4">
-              <div>
-                <span className="font-mono text-xs font-bold text-primaryviolet uppercase tracking-wider block mb-1">
-                  [ COSMOPAY // PAGO DE MISIÓN ]
-                </span>
-                <h3 className="font-display text-xl font-bold text-textprimary">
-                  Depositá {paymentIntent.amount} {paymentIntent.asset}
-                </h3>
-              </div>
-              {paymentIntent.isMock && (
-                <span className="self-start sm:self-auto px-2.5 py-1 rounded-full text-xs font-mono font-bold bg-amber-500/10 text-amber-600 border border-amber-500/20">
-                  PAGO MOCK
-                </span>
-              )}
+        {paymentIntent?.monad && (
+          <div className="flex flex-col gap-5">
+            <div className="border-b border-cardborder pb-4">
+              <span className="font-mono text-xs font-bold text-primaryviolet uppercase tracking-wider block mb-1">
+                [ MONAD TESTNET // DEPÓSITO USDC ]
+              </span>
+              <h3 className="font-display text-xl font-bold text-textprimary">
+                Depositá {paymentIntent.monad.amountUsdc} USDC
+              </h3>
+              <p className="font-sans text-xs text-textsecondary mt-1 leading-relaxed">
+                Una sola transferencia a la custodia. El consumo se mide off-chain y, al cerrar, una transacción paga lo usado y devuelve el resto.
+              </p>
             </div>
 
-            <div className="flex flex-col items-center gap-6">
-              {paymentIntent.qr && (
-                <div className="flex flex-col items-center justify-center p-4 bg-white rounded-2xl border border-cardborder shadow-sm w-full max-w-[280px]">
-                  <img src={paymentIntent.qr} alt="SEP-7 QR" className="w-56 h-56 object-contain rounded-lg mb-2" />
-                  <span className="font-mono text-[10px] text-textsecondary font-bold">ESCANEAR CON WALLET STELLAR</span>
-                </div>
-              )}
-
-              <div className="w-full flex flex-col gap-3 font-mono text-xs">
-                <div className="bg-bglight p-3.5 rounded-xl border border-cardborder">
-                  <span className="text-textsecondary block text-[10px]">MONTO INTENCIÓN</span>
-                  <span className="font-bold text-textprimary">{paymentIntent.amount} {paymentIntent.asset}</span>
-                </div>
-                {paymentIntent.destination && (
-                  <div className="bg-bglight p-3.5 rounded-xl border border-cardborder">
-                    <span className="text-textsecondary block text-[10px]">DESTINO DEPOSITARIO</span>
-                    <span className="font-bold text-textprimary text-[10px] break-all">{paymentIntent.destination}</span>
-                  </div>
-                )}
-                {paymentIntent.sep7Uri && (
-                  <a
-                    href={paymentIntent.sep7Uri}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="py-3 px-4 rounded-xl bg-primaryviolet text-white text-center font-bold text-xs uppercase tracking-wider hover:bg-primaryviolet-hover transition-all min-h-[48px] flex items-center justify-center"
-                  >
-                    ABRIR EN WALLET (SEP-7)
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
+              <div className="bg-bglight p-3.5 rounded-xl border border-cardborder">
+                <span className="text-textsecondary block text-[10px]">RED</span>
+                <span className="font-bold text-textprimary">Monad Testnet · chain {paymentIntent.monad.chainId}</span>
+              </div>
+              <div className="bg-bglight p-3.5 rounded-xl border border-cardborder">
+                <span className="text-textsecondary block text-[10px]">USDC (6 DECIMALES)</span>
+                <a className="font-bold text-primaryviolet break-all" href={`${paymentIntent.monad.explorer}/address/${paymentIntent.monad.usdc}`} target="_blank" rel="noreferrer">
+                  {paymentIntent.monad.usdc}
+                </a>
+              </div>
+              <div className="bg-bglight p-3.5 rounded-xl border border-cardborder sm:col-span-2">
+                <span className="text-textsecondary block text-[10px]">ESCROW</span>
+                {paymentIntent.monad.escrow ? (
+                  <a className="font-bold text-primaryviolet break-all" href={`${paymentIntent.monad.explorer}/address/${paymentIntent.monad.escrow}`} target="_blank" rel="noreferrer">
+                    {paymentIntent.monad.escrow}
                   </a>
+                ) : (
+                  <span className="font-bold text-alerta">Sin desplegar. Corré npm run monad:deploy y poné MONAD_ESCROW_ADDRESS en el servidor.</span>
                 )}
               </div>
             </div>
 
-            <div className="border-t border-cardborder pt-4">
-              <label className="block font-mono text-xs text-textsecondary mb-1">
-                HASH DE TRANSACCIÓN STELLAR (TX HASH)
-              </label>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="text"
-                  value={txHashInput}
-                  onChange={(e) => setTxHashInput(e.target.value)}
-                  placeholder={paymentIntent.isMock ? '0xmock_tx_hash (Autogenerado si está vacío)' : 'Hash de la transacción real'}
-                  className="flex-1 px-4 py-3 rounded-xl border border-cardborder font-mono text-xs text-textprimary focus:outline-none focus:border-primaryviolet"
-                />
-                <button
-                  type="button"
-                  disabled={paymentValidating}
-                  onClick={() => void handleConfirmPaymentSubmit()}
-                  className="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-tealbrand text-white font-mono text-xs font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5 min-h-[48px]"
-                >
-                  {paymentValidating ? (
-                    <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
-                  ) : (
-                    <span className="material-symbols-outlined text-sm">check_circle</span>
-                  )}
-                  CONFIRMAR PAGO
-                </button>
-              </div>
+            {walletAddress && (
+              <p className="font-mono text-[11px] text-textsecondary">
+                Wallet: <span className="text-textprimary font-bold">{walletAddress}</span>
+              </p>
+            )}
+            {depositTx && (
+              <a className="font-mono text-[11px] text-primaryviolet font-bold break-all" href={monadTxUrl(depositTx)} target="_blank" rel="noreferrer">
+                Depósito en MonadVision: {depositTx}
+              </a>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={() => void handleConnectWallet()}
+                className="flex-1 py-3.5 rounded-xl border border-cardborder bg-white font-mono text-xs font-bold uppercase tracking-wider hover:border-primaryviolet/40 min-h-[48px]"
+              >
+                {walletAddress ? 'WALLET CONECTADA' : 'CONECTAR METAMASK O RABBY'}
+              </button>
+              <button
+                type="button"
+                disabled={paymentValidating || !paymentIntent.monad.deployed}
+                onClick={() => void handleDeposit()}
+                className="flex-1 py-3.5 rounded-xl bg-tealbrand text-white font-mono text-xs font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-40 min-h-[48px]"
+              >
+                {paymentValidating ? 'ESPERANDO LA TRANSACCIÓN…' : 'DEPOSITAR USDC'}
+              </button>
             </div>
+            <p className="font-sans text-[11px] text-textsecondary leading-relaxed">
+              La wallet agrega Monad Testnet (chain id 10143) con wallet_addEthereumChain. Hace falta MON de prueba para el gas y USDC de prueba de Circle en esta red.
+            </p>
           </div>
         )}
 

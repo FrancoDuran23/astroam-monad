@@ -21,13 +21,11 @@ export default function SystemBadge() {
     )
   }
 
-  const isFullyConnected = caps.backendAvailable && caps.citrusReady && caps.channelReady
-
-  if (isFullyConnected) {
+  if (caps.monadEscrow) {
     return (
       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-online/10 border border-online/30 text-[10px] font-mono font-bold text-online tracking-wider uppercase">
         <span className="w-1.5 h-1.5 rounded-full bg-online animate-pulse" />
-        TESTNET CONECTADA
+        MONAD TESTNET
       </span>
     )
   }
@@ -35,7 +33,7 @@ export default function SystemBadge() {
   return (
     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-stellar/10 border border-stellar/30 text-[10px] font-mono font-bold text-stellar tracking-wider uppercase">
       <span className="w-1.5 h-1.5 rounded-full bg-stellar animate-pulse" />
-      CONFIGURANDO RED
+      MONAD · FALTA EL ESCROW
     </span>
   )
 }

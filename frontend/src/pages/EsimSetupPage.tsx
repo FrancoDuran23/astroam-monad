@@ -289,8 +289,18 @@ export default function EsimSetupPage() {
               Perfil provisto por Citrus Mobile
             </p>
             <p className="font-sans text-xs text-textsecondary">
-              La wallet de conectividad se administra en Citrus Mobile y está respaldada por el saldo disponible en el canal de pagos Soroban.
+              El QR es de la eSIM de demo. El depósito USDC quedó en el escrow de Monad; el tráfico de prueba no llama a Citrus.
             </p>
+            {mission.depositExplorerUrl && (
+              <a
+                href={mission.depositExplorerUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-[11px] font-bold text-primaryviolet underline break-all"
+              >
+                Ver el depósito en MonadVision
+              </a>
+            )}
           </div>
         </div>
         <button

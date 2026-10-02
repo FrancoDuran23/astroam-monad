@@ -23,7 +23,9 @@
     "meter:demo": "node src/meter/demo-meter.ts",
     "demo:flow": "node scripts/demo-flow.ts",
     "demo:cosmopay": "node scripts/demo-cosmopay-flow.ts",
-    "check:deposit": "node scripts/verify-user-deposit.ts"
+    "check:deposit": "node scripts/verify-user-deposit.ts",
+    "contracts:test": "forge test --root contracts",
+    "monad:deploy": "node --experimental-strip-types scripts/deploy-monad-escrow.ts"
   },
   "dependencies": {
     "@cosmosapp/pay_sdk": "^2.0.0",

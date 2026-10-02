@@ -10,6 +10,8 @@ import { createConnectivitySession, type ConnectivitySession } from '../../model
 import { runReconciliation } from '../../jobs/reconciliation.ts'
 import type { Network } from '../../shared/stellar/network.ts'
 import { parseNonNegativeIntegerRaw, pricePerMibFromPerMbRaw } from '../../shared/money.ts'
+import { monadTxUrl } from '../../shared/monad/explorer.ts'
+import { buildClosePlan, buildDepositPlan, buildTopUpPlan, escrowIdForMission, type MonadClosePlan, type MonadDepositPlan } from '../../shared/monad/voucher.ts'
 import { createHash } from 'node:crypto'
 import { StrKey } from '@stellar/stellar-sdk'
 
@@ -177,7 +179,26 @@ export class MissionProductService {
       liveEnabled: isLive,
       requiresAuth: isLive && Boolean(process.env.ASTROAM_DEMO_ACCESS_TOKEN),
       missingConfiguration: missing,
+      paymentRail: 'monad',
+      monadChainId: 10143,
+      monadUsdc: '0x534b2f3A21130d7a60830c2Df862319e593943A3',
+      monadUsdcDecimals: 6,
+      monadEscrow: this.monadDeposit('capabilities').escrow,
+      monadExplorer: 'https://testnet.monadvision.com',
     }
+  }
+
+  private monadDeposit(missionId: string, budgetUsdc = 0): MonadDepositPlan {
+    return buildDepositPlan({ missionId, budgetUsdc })
+  }
+
+  private monadClose(mission: ProductMission): MonadClosePlan {
+    return buildClosePlan({
+      missionId: mission.id,
+      budgetUsdc: mission.budgetUsdc,
+      meteredBytes: BigInt(mission.meteredBytes || '0'),
+      pricePerMbUsdc: mission.destination.pricePerMbUsdc,
+    })
   }
 
   async createMission(payload: {
@@ -228,59 +249,100 @@ export class MissionProductService {
     const mission = await this.repo.findById(missionId)
     if (!mission) throw new Error(`Misión ${missionId} no encontrada`)
 
-    if (this.isLiveMode() && this.cosmoPay.isMock) {
-      const err = new Error('503: Servicio CosmoPay no disponible en modo live (falta COSMOS_PAY_API_KEY)')
+    const monad = this.monadDeposit(mission.id, mission.budgetUsdc)
+    if (this.isLiveMode() && !monad.deployed) {
+      const err = new Error('503: Falta MONAD_ESCROW_ADDRESS para depositar USDC en Monad testnet')
       ;(err as unknown as { statusCode: number }).statusCode = 503
       throw err
     }
 
-    const intent = await this.cosmoPay.createDepositIntent({
-      amount: mission.budgetUsdc.toString(),
-      msg: `ASTROAM Mision ${mission.id}`,
-    })
+    // The wallet deposit is the Monad escrow. CosmoPay stays only as the
+    // offline intent id the existing demo confirmation already understands.
+    // Live mode does not call CosmoPay.
+    let intentId = `monad_${mission.id}`
+    let amount = monad.amountUsdc
+    let asset = 'USDC'
+    let sep7Uri: string | undefined
+    let qr: string | undefined
+    let destination: string | undefined
+    let status = 'pending'
+    let isMock = false
 
-    mission.paymentIntentId = intent.id
+    if (!this.isLiveMode()) {
+      const intent = await this.cosmoPay.createDepositIntent({
+        amount: mission.budgetUsdc.toString(),
+        msg: `ASTROAM Mision ${mission.id}`,
+      })
+      intentId = intent.id
+      amount = intent.amount
+      asset = intent.asset
+      sep7Uri = intent.uri
+      qr = intent.qr
+      destination = intent.destination
+      status = intent.status
+      isMock = intent.isMock
+    }
+
+    mission.paymentIntentId = intentId
+    mission.escrowId = monad.escrowId
+    mission.depositAtomic = monad.amount
     await this.repo.save(mission)
 
     return {
-      intentId: intent.id,
-      amount: intent.amount,
-      asset: intent.asset,
-      sep7Uri: intent.uri,
-      qr: intent.qr,
-      destination: intent.destination,
-      status: intent.status,
-      isMock: intent.isMock,
+      intentId,
+      amount,
+      asset,
+      sep7Uri,
+      qr,
+      destination,
+      status,
+      isMock,
+      rail: 'monad' as const,
+      monad,
     }
   }
 
-  async confirmPayment(missionId: string, intentId: string, txHash: string) {
+  async confirmPayment(missionId: string, intentId: string, txHash: string, traveler?: string) {
     const mission = await this.repo.findById(missionId)
     if (!mission) throw new Error(`Misión ${missionId} no encontrada`)
 
     if (mission.paymentStatus === 'paid' && mission.depositTxHash) {
-      return { valid: true, status: 'paid', depositTxHash: mission.depositTxHash }
+      return {
+        valid: true,
+        status: 'paid',
+        depositTxHash: mission.depositTxHash,
+        explorerUrl: mission.depositExplorerUrl ?? monadTxUrl(mission.depositTxHash),
+      }
     }
 
-    if (this.isLiveMode() && this.cosmoPay.isMock) {
-      const err = new Error('503: Servicio CosmoPay no disponible en modo live')
-      ;(err as unknown as { statusCode: number }).statusCode = 503
-      throw err
-    }
-
-    const result = await this.cosmoPay.validateTx(intentId, txHash)
-    if (!result.valid) {
-      mission.paymentStatus = 'failed'
-      await this.repo.save(mission)
-      throw new Error(`Pago inválido para la intención ${intentId}: ${result.status}`)
+    const monadIntent = intentId.startsWith('monad_')
+    if (!monadIntent) {
+      if (this.isLiveMode() && this.cosmoPay.isMock) {
+        const err = new Error('503: Servicio CosmoPay no disponible en modo live')
+        ;(err as unknown as { statusCode: number }).statusCode = 503
+        throw err
+      }
+      const result = await this.cosmoPay.validateTx(intentId, txHash)
+      if (!result.valid) {
+        mission.paymentStatus = 'failed'
+        await this.repo.save(mission)
+        throw new Error(`Pago inválido para la intención ${intentId}: ${result.status}`)
+      }
+    } else if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      throw new Error('Pago inválido: el depósito de Monad necesita un hash 0x de 32 bytes')
     }
 
     mission.paymentStatus = 'paid'
     mission.status = 'paid'
     mission.depositTxHash = txHash
+    mission.escrowId = mission.escrowId ?? escrowIdForMission(mission.id)
+    mission.depositAtomic = mission.depositAtomic ?? this.monadDeposit(mission.id, mission.budgetUsdc).amount
+    if (traveler && /^0x[0-9a-fA-F]{40}$/.test(traveler)) mission.travelerAddress = traveler
+    const explorerUrl = monadTxUrl(txHash)
+    if (explorerUrl) mission.depositExplorerUrl = explorerUrl
     await this.repo.save(mission)
 
-    return { valid: true, status: 'paid', depositTxHash: txHash }
+    return { valid: true, status: 'paid', depositTxHash: txHash, explorerUrl }
   }
 
   async activateMission(missionId: string) {
@@ -446,20 +508,38 @@ export class MissionProductService {
     const mission = await this.repo.findById(missionId)
     if (!mission) throw new Error(`Misión ${missionId} no encontrada`)
 
-    if (this.isLiveMode() && this.cosmoPay.isMock) {
-      const err = new Error('503: Servicio CosmoPay no disponible en modo live')
+    const monad = buildTopUpPlan({ missionId, amountUsdc })
+    if (this.isLiveMode() && !monad.deployed) {
+      const err = new Error('503: Falta MONAD_ESCROW_ADDRESS para recargar USDC en Monad testnet')
       ;(err as unknown as { statusCode: number }).statusCode = 503
       throw err
     }
 
-    const intent = await this.cosmoPay.createDepositIntent({
-      amount: amountUsdc.toString(),
-      msg: `ASTROAM Recarga ${missionId}`,
-    })
+    let intentId = `monad_top_${mission.id}_${Date.now()}`
+    let amount = monad.amountUsdc
+    let asset = 'USDC'
+    let sep7Uri: string | undefined
+    let qr: string | undefined
+    let status = 'pending'
+    let isMock = false
+
+    if (!this.isLiveMode()) {
+      const intent = await this.cosmoPay.createDepositIntent({
+        amount: amountUsdc.toString(),
+        msg: `ASTROAM Recarga ${missionId}`,
+      })
+      intentId = intent.id
+      amount = intent.amount
+      asset = intent.asset
+      sep7Uri = intent.uri
+      qr = intent.qr
+      status = intent.status
+      isMock = intent.isMock
+    }
 
     const record = {
       id: `top_${Date.now()}`,
-      intentId: intent.id,
+      intentId,
       amountUsdc,
       status: 'pending' as const,
       createdAt: new Date().toISOString(),
@@ -469,13 +549,15 @@ export class MissionProductService {
     await this.repo.save(mission)
 
     return {
-      intentId: intent.id,
-      amount: intent.amount,
-      asset: intent.asset,
-      sep7Uri: intent.uri,
-      qr: intent.qr,
-      status: intent.status,
-      isMock: intent.isMock,
+      intentId,
+      amount,
+      asset,
+      sep7Uri,
+      qr,
+      status,
+      isMock,
+      rail: 'monad' as const,
+      monad,
     }
   }
 
@@ -490,18 +572,22 @@ export class MissionProductService {
       return { valid: true, status: 'settled', txHash: topup.txHash }
     }
 
-    if (this.isLiveMode() && this.cosmoPay.isMock) {
-      const err = new Error('503: Servicio CosmoPay no disponible en modo live')
-      ;(err as unknown as { statusCode: number }).statusCode = 503
-      throw err
+    const evmTx = /^0x[0-9a-fA-F]{64}$/.test(txHash)
+    if (!intentId.startsWith('monad_top_') && !evmTx) {
+      if (this.isLiveMode() && this.cosmoPay.isMock) {
+        const err = new Error('503: Servicio CosmoPay no disponible en modo live')
+        ;(err as unknown as { statusCode: number }).statusCode = 503
+        throw err
+      }
+      const result = await this.cosmoPay.validateTx(intentId, txHash)
+      if (!result.valid) {
+        throw new Error(`Pago de recarga inválido: ${result.status}`)
+      }
     }
 
-    const result = await this.cosmoPay.validateTx(intentId, txHash)
-    if (!result.valid) {
-      throw new Error(`Pago de recarga inválido: ${result.status}`)
-    }
-
-    if (this.channelPort?.topUp && mission.channelId) {
+    // An EVM top-up already moved 6-decimal USDC in the escrow. Do not also
+    // push a 7-decimal Stellar raw amount through the old channel.
+    if (!evmTx && this.channelPort?.topUp && mission.channelId) {
       try {
         const rawAmount = BigInt(Math.round(topup.amountUsdc * 1e7))
         await this.channelPort.topUp({ channel: mission.channelId, amountRaw: rawAmount })
@@ -536,36 +622,74 @@ export class MissionProductService {
     const mission = await this.repo.findById(missionId)
     if (!mission) throw new Error(`Misión ${missionId} no encontrada`)
 
-    if (this.isLiveMode() && (!this.hasChannelReal || !this.channelPort)) {
-      const err = new Error('503: Canal Soroban o credenciales de cierre no disponibles en modo live (falta CHANNEL_CONTRACT o SIGNER_SECRET)')
+    if (mission.status === 'completed' && mission.closeTxHash) {
+      return {
+        txHash: mission.closeTxHash,
+        status: 'completed' as const,
+        explorerUrl: mission.closeExplorerUrl ?? monadTxUrl(mission.closeTxHash),
+        settlement: mission.settlement ?? 'close',
+        monad: this.monadClose(mission),
+      }
+    }
+
+    const monad = this.monadClose(mission)
+    if (this.isLiveMode() && !monad.deployed) {
+      const err = new Error('503: Falta MONAD_ESCROW_ADDRESS para cerrar el depósito en Monad testnet')
       ;(err as unknown as { statusCode: number }).statusCode = 503
       throw err
     }
 
-    let closeTxHash = `close_tx_${Date.now()}`
-    if (this.channelPort?.closeStart && mission.channelId) {
-      try {
-        const res = await this.channelPort.closeStart({ channel: mission.channelId })
-        closeTxHash = res.txHash
-      } catch {
-        // Fallback
+    // The cumulative voucher is quoted here. The traveler's wallet signs it
+    // and sends the single close. Usage stays off-chain until that transaction.
+    return {
+      status: 'awaiting_close' as const,
+      refundAmountUsdc: Number(monad.refundUsdc),
+      monad,
+    }
+  }
+
+  async confirmClose(missionId: string, txHash: string, settlement: 'close' | 'timeout_refund' = 'close') {
+    const mission = await this.repo.findById(missionId)
+    if (!mission) throw new Error(`Misión ${missionId} no encontrada`)
+
+    if (mission.status === 'completed' && mission.closeTxHash) {
+      return {
+        txHash: mission.closeTxHash,
+        status: 'completed' as const,
+        explorerUrl: mission.closeExplorerUrl ?? monadTxUrl(mission.closeTxHash),
+        settlement: mission.settlement ?? settlement,
       }
+    }
+
+    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      throw new Error('El cierre necesita el hash de la transacción en Monad (0x + 64 hex)')
     }
 
     if (mission.iccid) {
       try {
         await this.connectivity.refundUnused(mission.iccid)
       } catch {
-        // Fallback
+        // The eSIM wallet is demo-only unless Citrus is configured. The USDC
+        // refund already happened in the escrow transaction.
       }
     }
 
+    const explorerUrl = monadTxUrl(txHash)
     mission.status = 'completed'
     mission.esimStatus = 'disabled'
-    mission.closeTxHash = closeTxHash
+    mission.closeTxHash = txHash
+    mission.settlement = settlement
+    if (explorerUrl) mission.closeExplorerUrl = explorerUrl
     await this.repo.save(mission)
 
-    return { txHash: closeTxHash, status: 'completed' }
+    return {
+      txHash,
+      status: 'completed' as const,
+      explorerUrl,
+      settlement,
+      refundAmountUsdc: Number(this.monadClose(mission).refundUsdc),
+      monad: this.monadClose(mission),
+    }
   }
 
   private getOrCreateMeterService(mission: ProductMission): IntegratedMeterService {

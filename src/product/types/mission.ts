@@ -12,6 +12,7 @@ export type ProductMissionStatus =
   | 'paid'
   | 'active'
   | 'paused'
+  | 'closing'
   | 'completed'
   | 'failed'
 
@@ -48,6 +49,11 @@ export type ProductMission = {
   paymentStatus: 'pending' | 'paid' | 'failed'
   paymentIntentId?: string
   depositTxHash?: string
+  depositExplorerUrl?: string
+  escrowId?: string
+  travelerAddress?: string
+  depositAtomic?: string
+  settlement?: 'close' | 'timeout_refund'
   channelId?: string
   iccid?: string
   esim?: PublicEsimInfo
@@ -59,6 +65,7 @@ export type ProductMission = {
   consumedMb: number
   topups: TopUpRecord[]
   closeTxHash?: string
+  closeExplorerUrl?: string
   createdAt: string
   updatedAt: string
 }
@@ -84,4 +91,10 @@ export type Capabilities = {
   liveEnabled: boolean
   requiresAuth: boolean
   missingConfiguration: string[]
+  paymentRail: 'monad'
+  monadChainId: number
+  monadUsdc: string
+  monadUsdcDecimals: number
+  monadEscrow: string | null
+  monadExplorer: string
 }

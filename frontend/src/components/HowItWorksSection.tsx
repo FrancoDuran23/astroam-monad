@@ -12,7 +12,7 @@ export default function HowItWorksSection() {
             CÓMO FUNCIONA
           </h2>
           <p className="text-base sm:text-lg text-textsecondary">
-            Un recorrido continuo de 4 niveles que activa tu conectividad en segundos sobre la infraestructura descentralizada de Stellar.
+            Depositás USDC una vez en Monad testnet. El consumo se mide off-chain y una sola transacción cierra la cuenta.
           </p>
         </div>
 
@@ -63,7 +63,7 @@ export default function HowItWorksSection() {
               </div>
               <h3 className="font-display text-lg font-bold text-textprimary">CARGÁ COMBUSTIBLE</h3>
               <p className="text-xs text-textsecondary leading-relaxed">
-                Depositá saldo en USDC. Tu dinero permanece seguro bajo tu custodia en la red Stellar y nunca vence.
+                Depositá USDC de Circle en Monad testnet con MetaMask o Rabby. El saldo queda en custodia hasta el cierre.
               </p>
             </div>
           </div>
@@ -105,7 +105,7 @@ export default function HowItWorksSection() {
                 <circle cx="32" cy="72" fill="#FDDA24" r="3" />
                 <circle cx="50" cy="40" fill="#008C99" r="3" />
               </svg>
-              <span className="absolute bottom-2 left-3 font-mono text-[9px] font-semibold text-primaryviolet tracking-widest">[ MICROPAGOS EN VIVO ]</span>
+              <span className="absolute bottom-2 left-3 font-mono text-[9px] font-semibold text-primaryviolet tracking-widest">[ VALE ACUMULADO ]</span>
             </div>
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
@@ -114,7 +114,7 @@ export default function HowItWorksSection() {
               </div>
               <h3 className="font-display text-lg font-bold text-textprimary">PAGÁ POR CONSUMO</h3>
               <p className="text-xs text-textsecondary leading-relaxed">
-                Navegá sin fricción. Cada bloque de megabytes se liquida automáticamente. Lo que no usás, no lo pagás.
+                El uso se acumula off-chain. Al cerrar, una transacción paga lo consumido y devuelve el resto.
               </p>
             </div>
           </div>

@@ -3,6 +3,8 @@ import { envConfig } from '../config/env'
 import { demoMissionService } from '../services/DemoMissionService'
 import { apiMissionService } from '../services/ApiMissionService'
 import { DEMO_TRAFFIC_MB } from '../utils/missionUtils'
+import { closeEscrow, refundEscrow } from '../chain/monad'
+import { getAddress, type Hex } from 'viem'
 import type {
   BackendCapabilities,
   FinishResult,
@@ -140,7 +142,7 @@ export function useMission() {
     return apiMissionService.createPaymentIntent(current.id)
   }
 
-  const confirmPayment = async (intentId: string, txHash: string): Promise<PaymentConfirmationResult> => {
+  const confirmPayment = async (intentId: string, txHash: string, traveler?: string): Promise<PaymentConfirmationResult> => {
     if (!mission) throw new Error('No hay misión activa')
     setActionLoading(true)
     try {
@@ -150,7 +152,7 @@ export function useMission() {
         demoMissionService.saveState({ mission: updated, events })
         return { valid: true, status: 'paid', depositTxHash: txHash }
       }
-      const res = await apiMissionService.confirmPayment(mission.id, intentId, txHash)
+      const res = await apiMissionService.confirmPayment(mission.id, intentId, txHash, traveler)
       if (res.valid) {
         const fresh = await apiMissionService.getMission(mission.id)
         setMission(fresh)
@@ -248,10 +250,17 @@ export function useMission() {
         setEvents(newState.events)
         return { status: 'completed', txHash: '0xdemo_close_tx' }
       }
-      const res = await apiMissionService.finishMission(mission.id)
+      const quoted = await apiMissionService.finishMission(mission.id)
+      if (quoted.status === 'awaiting_close' && quoted.monad?.deployed && quoted.monad.typedData) {
+        const txHash = await closeEscrow(quoted.monad)
+        const confirmed = await apiMissionService.confirmClose(mission.id, txHash, 'close')
+        const fresh = await apiMissionService.getMission(mission.id)
+        setMission({ ...fresh, closeExplorerUrl: confirmed.explorerUrl ?? fresh.closeExplorerUrl })
+        return confirmed
+      }
       const fresh = await apiMissionService.getMission(mission.id)
       setMission(fresh)
-      return res
+      return quoted
     } finally {
       setActionLoading(false)
     }
@@ -267,6 +276,23 @@ export function useMission() {
       await apiMissionService.triggerDemoTraffic(mission.id, DEMO_TRAFFIC_MB * 1_000_000)
       const fresh = await apiMissionService.getMission(mission.id)
       setMission(fresh)
+    }
+  }
+
+  const refundDeposit = async (): Promise<FinishResult> => {
+    if (!mission) throw new Error('No hay misión activa')
+    if (!mission.escrowId || !caps?.monadEscrow) {
+      throw new Error('El escrow no está desplegado. Corré npm run monad:deploy y configurá MONAD_ESCROW_ADDRESS.')
+    }
+    setActionLoading(true)
+    try {
+      const txHash = await refundEscrow(getAddress(caps.monadEscrow), mission.escrowId as Hex)
+      const confirmed = await apiMissionService.confirmClose(mission.id, txHash, 'timeout_refund')
+      const fresh = await apiMissionService.getMission(mission.id)
+      setMission({ ...fresh, closeExplorerUrl: confirmed.explorerUrl ?? fresh.closeExplorerUrl })
+      return confirmed
+    } finally {
+      setActionLoading(false)
     }
   }
 
@@ -297,6 +323,7 @@ export function useMission() {
     confirmTopUpPayment,
     togglePause,
     finish,
+    refundDeposit,
     simulate,
     reset,
   }

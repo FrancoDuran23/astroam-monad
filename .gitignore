@@ -18,3 +18,8 @@ frontend/.env.*
 !frontend/.env.example
 # TypeScript incremental build info
 *.tsbuildinfo
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/

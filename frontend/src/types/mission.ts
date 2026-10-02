@@ -1,6 +1,6 @@
 // ── Core domain types for ASTROAM mission flow ──────────────────────────────
 
-export type Network = 'stellar:testnet' | 'stellar:pubnet'
+export type Network = 'stellar:testnet' | 'stellar:pubnet' | 'monad:testnet'
 
 export type MissionStatus =
   | 'pending_payment'
@@ -45,6 +45,10 @@ export type Mission = {
   status: MissionStatus
   paymentStatus?: 'pending' | 'paid' | 'failed'
   depositTxHash?: string
+  depositExplorerUrl?: string
+  escrowId?: string
+  travelerAddress?: string
+  closeExplorerUrl?: string
   // live state
   balanceUsdc: number      // remaining
   consumedUsdc: number
@@ -82,6 +86,46 @@ export type MissionState = {
   events: UsageEvent[]
 }
 
+export type MonadDepositPlan = {
+  chainId: 10143
+  chainIdHex: '0x279f'
+  chainName: string
+  rpcUrl: string
+  explorer: string
+  usdc: `0x${string}`
+  usdcDecimals: 6
+  escrow: `0x${string}` | null
+  payee: `0x${string}` | null
+  escrowId: `0x${string}`
+  amount: string
+  amountUsdc: string
+  timeoutSeconds: number
+  deployed: boolean
+}
+
+export type MonadClosePlan = MonadDepositPlan & {
+  cumulativeAmount: string
+  refundAtomic: string
+  usedUsdc: string
+  refundUsdc: string
+  typedData: {
+    domain: {
+      name: 'AstroAmEscrow'
+      version: '1'
+      chainId: number
+      verifyingContract: `0x${string}`
+    }
+    types: {
+      CloseVoucher: readonly { name: string; type: string }[]
+    }
+    primaryType: 'CloseVoucher'
+    message: {
+      escrowId: `0x${string}`
+      cumulativeAmount: string
+    }
+  } | null
+}
+
 export type PaymentIntentInfo = {
   intentId: string
   amount: string
@@ -91,18 +135,24 @@ export type PaymentIntentInfo = {
   destination?: string
   status: string
   isMock: boolean
+  rail?: 'monad'
+  monad?: MonadDepositPlan
 }
 
 export type PaymentConfirmationResult = {
   valid: boolean
   status: string
   depositTxHash?: string
+  explorerUrl?: string | null
 }
 
 export type FinishResult = {
   txHash?: string
-  status: 'closing' | 'refund_pending' | 'settling' | 'completed' | 'failed'
+  status: 'closing' | 'refund_pending' | 'settling' | 'completed' | 'failed' | 'awaiting_close'
   refundAmountUsdc?: number
+  explorerUrl?: string | null
+  settlement?: 'close' | 'timeout_refund'
+  monad?: MonadClosePlan
 }
 
 export type BackendCapabilities = {
@@ -126,6 +176,12 @@ export type BackendCapabilities = {
   liveEnabled: boolean
   requiresAuth: boolean
   missingConfiguration: string[]
+  paymentRail?: 'monad'
+  monadChainId?: number
+  monadUsdc?: string
+  monadUsdcDecimals?: number
+  monadEscrow?: string | null
+  monadExplorer?: string
 }
 
 // ── Wizard step state ────────────────────────────────────────────────────────

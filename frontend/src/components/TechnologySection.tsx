@@ -29,8 +29,8 @@ const steps = [
     icon: 'hub',
     color: 'text-tealbrand',
     step: 'PASO 04',
-    title: 'RED STELLAR',
-    desc: 'Liquidación en 5 segundos',
+    title: 'RED MONAD',
+    desc: 'Un cierre, con reembolso',
     img: null,
   },
   {
