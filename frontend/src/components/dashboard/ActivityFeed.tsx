@@ -1,4 +1,4 @@
-import { fmtTime } from '../../utils/missionUtils'
+import { fmtMb, fmtTime, shortTx } from '../../utils/missionUtils'
 import type { UsageEvent } from '../../types/mission'
 
 type Props = {
@@ -8,74 +8,52 @@ type Props = {
 export default function ActivityFeed({ events }: Props) {
   if (events.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-3 py-10 text-center">
-        <span className="material-symbols-outlined text-3xl text-textsecondary/40">receipt_long</span>
-        <p className="font-mono text-xs font-bold text-textsecondary/60 uppercase tracking-widest">
-          Sin actividad aún
-        </p>
-        <p className="text-xs text-textsecondary/40">Simulá consumo para ver los micropagos</p>
+      <div className="rounded-xl border border-dashed border-line p-6 text-center text-sm text-ink-faint">
+        No activity yet. Every reading of your data use shows up here with its signed voucher.
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+    <ul className="flex flex-col divide-y divide-line">
       {events.map((ev) => {
-        const isTopup = ev.mb === 0
-
+        const topup = ev.kind === 'topup'
+        const rejected = ev.status === 'rejected'
         return (
-          <div
-            key={ev.id}
-            className="flex items-center gap-3 p-3 rounded-xl bg-white border border-cardborder hover:border-primaryviolet/20 transition-all"
-          >
-            {/* Icon */}
-            <div
-              className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                isTopup ? 'bg-tealbrand/10' : 'bg-primaryviolet-light'
-              }`}
-            >
-              <span
-                className={`material-symbols-outlined text-sm ${isTopup ? 'text-tealbrand' : 'text-primaryviolet'}`}
-              >
-                {isTopup ? 'add_circle' : 'bolt'}
-              </span>
-            </div>
-
-            {/* Details */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-sans text-xs font-semibold text-textprimary">
-                  {isTopup ? 'Recarga de saldo' : `${ev.mb.toFixed(1)} MB liquidados`}
-                </span>
-                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-online/10 border border-online/20 font-mono text-[9px] font-bold text-online tracking-wider">
-                  LIQUIDADO
-                </span>
-              </div>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="font-mono text-[10px] text-textsecondary">
-                  {fmtTime(ev.timestamp)}
-                </span>
-                <span className="font-mono text-[10px] font-semibold text-textsecondary/70">
-                  {ev.txId.slice(0, 12)}…
-                </span>
-                <span className="inline-flex items-center gap-0.5 font-mono text-[9px] text-primaryviolet font-medium">
-                  Stellar Testnet (Simulado)
-                </span>
-              </div>
-            </div>
-
-            {/* Amount */}
+          <li key={ev.id} className="flex items-center gap-3 py-3">
             <span
-              className={`font-display text-sm font-bold shrink-0 ${
-                isTopup ? 'text-tealbrand' : 'text-textprimary'
+              className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${
+                topup ? 'bg-orbit-dim text-orbit' : rejected ? 'bg-alert/10 text-alert' : 'bg-signal-dim text-signal'
               }`}
             >
-              {isTopup ? '+' : '-'}
-              {ev.amountUsdc.toFixed(4)} USDC
+              <span className="material-symbols-outlined text-[18px]">{topup ? 'add' : rejected ? 'block' : 'bolt'}</span>
             </span>
-          </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="truncate text-sm font-semibold">
+                  {topup ? 'Top-up' : rejected ? `${fmtMb(ev.mb)} — not covered` : `${fmtMb(ev.mb)} used`}
+                </span>
+                <span className={`tabular shrink-0 font-mono text-sm ${topup ? 'text-orbit' : rejected ? 'text-alert' : ''}`}>
+                  {topup ? '+' : '−'}
+                  {ev.amountUsdc.toFixed(4)}
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-2 font-mono text-[11px] text-ink-faint">
+                <span>
+                  {fmtTime(ev.timestamp)} · {topup ? 'deposit' : rejected ? 'channel exhausted' : 'voucher signed'}
+                </span>
+                {ev.txId && (ev.explorerUrl ? (
+                  <a href={ev.explorerUrl} target="_blank" rel="noreferrer" className="text-signal hover:underline">
+                    {shortTx(ev.txId)}
+                  </a>
+                ) : (
+                  <span>{shortTx(ev.txId)}</span>
+                ))}
+              </div>
+            </div>
+          </li>
         )
       })}
-    </div>
+    </ul>
   )
 }

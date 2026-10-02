@@ -1,41 +1,25 @@
 import { useMission } from '../hooks/useMission'
 
+/** Where payments run right now: a live chain, simulated, or no server. */
 export default function SystemBadge() {
   const { caps, backendError, isDemoMode } = useMission()
 
+  let tone = 'border-warn/40 text-warn'
+  let label = 'Simulated payments'
   if (isDemoMode) {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-[10px] font-mono font-bold text-amber-600 tracking-wider uppercase">
-        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-        MODO DEMO
-      </span>
-    )
-  }
-
-  if (backendError || !caps || !caps.backendAvailable) {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-alerta/10 border border-alerta/30 text-[10px] font-mono font-bold text-alerta tracking-wider uppercase">
-        <span className="w-1.5 h-1.5 rounded-full bg-alerta" />
-        BACKEND OFFLINE
-      </span>
-    )
-  }
-
-  const isFullyConnected = caps.backendAvailable && caps.citrusReady && caps.channelReady
-
-  if (isFullyConnected) {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-online/10 border border-online/30 text-[10px] font-mono font-bold text-online tracking-wider uppercase">
-        <span className="w-1.5 h-1.5 rounded-full bg-online animate-pulse" />
-        TESTNET CONECTADA
-      </span>
-    )
+    label = 'Offline demo'
+  } else if (backendError || !caps?.backendAvailable) {
+    tone = 'border-alert/40 text-alert'
+    label = 'Server offline'
+  } else if (caps.paymentsLive) {
+    tone = 'border-signal/40 text-signal'
+    label = caps.paymentRail
   }
 
   return (
-    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-stellar/10 border border-stellar/30 text-[10px] font-mono font-bold text-stellar tracking-wider uppercase">
-      <span className="w-1.5 h-1.5 rounded-full bg-stellar animate-pulse" />
-      CONFIGURANDO RED
+    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border bg-white/[0.03] px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider ${tone}`}>
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {label}
     </span>
   )
 }

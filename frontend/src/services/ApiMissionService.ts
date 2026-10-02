@@ -89,7 +89,7 @@ export class ApiMissionService {
       consumedUsdc: 0,
       consumedMb: 0,
       esimStatus: 'not_provisioned',
-      network: 'stellar:testnet',
+      network: 'demo:local',
       channelId: '',
       createdAt: new Date().toISOString(),
     }

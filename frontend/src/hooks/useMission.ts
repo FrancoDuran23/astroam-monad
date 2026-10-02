@@ -41,7 +41,7 @@ export function useMission() {
       setCaps(capabilities)
 
       if (!capabilities || !capabilities.backendAvailable) {
-        setBackendError('BACKEND NO DISPONIBLE — El servidor de producto ASTROAM no responde.')
+        setBackendError('The AstroAm server is not responding.')
         setLoading(false)
         return
       }
@@ -74,7 +74,7 @@ export function useMission() {
         }
       }
     } catch (err) {
-      setBackendError(err instanceof Error ? err.message : 'Error al conectar con la API')
+      setBackendError(err instanceof Error ? err.message : 'Could not reach the API')
     } finally {
       setLoading(false)
     }
@@ -127,7 +127,7 @@ export function useMission() {
   // todavía no la tiene cuando se llama justo después de createMission.
   const createPaymentIntent = async (target?: Mission): Promise<PaymentIntentInfo> => {
     const current = target ?? mission
-    if (!current) throw new Error('No hay misión activa')
+    if (!current) throw new Error('No active mission')
     if (isDemoMode) {
       return {
         intentId: `intent_demo_${Date.now()}`,
@@ -141,7 +141,7 @@ export function useMission() {
   }
 
   const confirmPayment = async (intentId: string, txHash: string): Promise<PaymentConfirmationResult> => {
-    if (!mission) throw new Error('No hay misión activa')
+    if (!mission) throw new Error('No active mission')
     setActionLoading(true)
     try {
       if (isDemoMode) {
@@ -162,7 +162,7 @@ export function useMission() {
   }
 
   const activate = async (): Promise<void> => {
-    if (!mission) throw new Error('No hay misión activa')
+    if (!mission) throw new Error('No active mission')
     setActionLoading(true)
     try {
       if (isDemoMode) {
@@ -184,7 +184,7 @@ export function useMission() {
   }
 
   const createTopUpIntent = async (amountUsdc: number): Promise<PaymentIntentInfo> => {
-    if (!mission) throw new Error('No hay misión activa')
+    if (!mission) throw new Error('No active mission')
     if (isDemoMode) {
       return {
         intentId: `top_intent_${Date.now()}`,
@@ -198,7 +198,7 @@ export function useMission() {
   }
 
   const confirmTopUpPayment = async (intentId: string, txHash: string, amountUsdc: number): Promise<void> => {
-    if (!mission) throw new Error('No hay misión activa')
+    if (!mission) throw new Error('No active mission')
     setActionLoading(true)
     try {
       if (isDemoMode) {
@@ -239,14 +239,19 @@ export function useMission() {
   }
 
   const finish = async (): Promise<FinishResult> => {
-    if (!mission) throw new Error('No hay misión activa')
+    if (!mission) throw new Error('No active mission')
     setActionLoading(true)
     try {
       if (isDemoMode) {
         const newState = demoMissionService.completeMission({ mission, events })
         setMission(newState.mission)
         setEvents(newState.events)
-        return { status: 'completed', txHash: '0xdemo_close_tx' }
+        return {
+          status: 'completed',
+          txHash: `demo_close_${Date.now().toString(16)}`,
+          settledUsdc: mission.consumedUsdc,
+          refundedUsdc: mission.balanceUsdc,
+        }
       }
       const res = await apiMissionService.finishMission(mission.id)
       const fresh = await apiMissionService.getMission(mission.id)
@@ -264,8 +269,22 @@ export function useMission() {
       setMission(newState.mission)
       setEvents(newState.events)
     } else {
-      await apiMissionService.triggerDemoTraffic(mission.id, DEMO_TRAFFIC_MB * 1_000_000)
+      const res = (await apiMissionService.triggerDemoTraffic(mission.id, DEMO_TRAFFIC_MB * 1_000_000)) as {
+        voucher?: { kind: string; envelope?: { voucher?: { signature?: string } } }
+        consumedUsdc?: number
+      }
       const fresh = await apiMissionService.getMission(mission.id)
+      const signed = res.voucher?.kind === 'signed'
+      const event: UsageEvent = {
+        id: `${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        kind: 'usage',
+        mb: DEMO_TRAFFIC_MB,
+        amountUsdc: Math.max(0, (fresh.consumedUsdc ?? 0) - (mission.consumedUsdc ?? 0)),
+        status: signed ? 'signed' : 'rejected',
+        txId: res.voucher?.envelope?.voucher?.signature ?? '',
+      }
+      setEvents((prev) => [event, ...prev])
       setMission(fresh)
     }
   }

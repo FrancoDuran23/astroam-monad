@@ -7,183 +7,119 @@ type Props = {
 }
 
 export default function TopUpModal({ onClose }: Props) {
-  const { isDemoMode, createTopUpIntent, confirmTopUpPayment, actionLoading } = useMission()
+  const { isDemoMode, caps, createTopUpIntent, confirmTopUpPayment, actionLoading } = useMission()
   const [amount, setAmount] = useState(5)
   const [intent, setIntent] = useState<PaymentIntentInfo | null>(null)
-  const [txHashInput, setTxHashInput] = useState('')
+  const [txHash, setTxHash] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const simulated = isDemoMode || !caps?.paymentsLive
 
-  async function handleStartTopUp() {
+  async function start() {
     setError(null)
     try {
       if (isDemoMode) {
-        await confirmTopUpPayment(`intent_demo_${Date.now()}`, `tx_${Date.now()}`, amount)
+        await confirmTopUpPayment(`intent_demo_${Date.now()}`, `0x${Date.now().toString(16)}`, amount)
         onClose()
       } else {
-        const topIntent = await createTopUpIntent(amount)
-        setIntent(topIntent)
+        setIntent(await createTopUpIntent(amount))
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al solicitar recarga')
+      setError(e instanceof Error ? e.message : 'Could not start the top-up')
     }
   }
 
-  async function handleConfirmTopUp() {
+  async function confirm() {
     if (!intent) return
     setError(null)
     try {
-      const txHash = txHashInput.trim() || `tx_${Date.now().toString(16)}`
-      await confirmTopUpPayment(intent.intentId, txHash, amount)
+      await confirmTopUpPayment(intent.intentId, txHash.trim() || `0x${Date.now().toString(16)}`, amount)
       onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al confirmar pago de recarga')
+      setError(e instanceof Error ? e.message : 'Could not confirm the top-up')
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
-      {/* Backdrop overlay */}
-      <div
-        className="absolute inset-0 bg-textprimary/40 backdrop-blur-sm transition-opacity"
-        onClick={() => !actionLoading && onClose()}
-      />
-
-      {/* Real mobile bottom-sheet / Desktop centered modal card */}
-      <div className="relative z-10 w-full max-w-md max-h-[92dvh] md:max-h-[90vh] overflow-y-auto bg-white rounded-t-3xl rounded-b-none md:rounded-3xl border-t md:border border-cardborder shadow-[0_-12px_40px_rgba(15,23,42,0.2)] md:shadow-[0_20px_60px_rgba(25,24,29,0.12)] p-6 md:p-7 flex flex-col gap-6 pb-[max(2rem,env(safe-area-inset-bottom))]">
-        {/* Mobile drag handle indicator */}
-        <div className="w-12 h-1.5 bg-cardborder rounded-full mx-auto -mt-2 mb-1 md:hidden shrink-0" />
-
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-labelledby="topup-title">
+      <button type="button" aria-label="Close" className="absolute inset-0 bg-space-950/80 backdrop-blur-sm" onClick={() => !actionLoading && onClose()} />
+      <div className="pb-safe relative w-full max-w-lg rounded-t-3xl border border-line bg-space-900 p-6 sm:rounded-3xl">
         <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-display text-xl font-bold text-textprimary">Recargar saldo</h3>
-            <p className="text-xs text-textsecondary mt-0.5">Agregá USDC a tu misión activa vía CosmoPay</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-bglight border border-cardborder flex items-center justify-center hover:bg-cardborder transition-colors"
-          >
-            <span className="material-symbols-outlined text-sm text-textsecondary">close</span>
-          </button>
+          <h2 id="topup-title" className="font-display text-xl font-bold">
+            Top up your trip
+          </h2>
+          {simulated && <span className="chip border-warn/40 text-warn">Simulated</span>}
         </div>
 
         {!intent ? (
           <>
-            {/* Amount selector */}
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <label className="font-mono text-[11px] font-bold text-textsecondary tracking-widest uppercase">
-                  IMPORTE
-                </label>
-                <span className="font-display text-2xl font-bold text-primaryviolet">
-                  {amount.toFixed(2)} USDC
-                </span>
-              </div>
-              <input
-                type="range"
-                min={1}
-                max={50}
-                step={0.5}
-                value={amount}
-                onChange={(e) => setAmount(parseFloat(e.target.value))}
-                className="w-full accent-primaryviolet"
-              />
-              <div className="flex justify-between font-mono text-[10px] text-textsecondary">
-                <span>1 USDC</span>
-                <span>50 USDC</span>
-              </div>
-
-              {/* Quick amounts */}
-              <div className="flex gap-2 pt-1">
-                {[5, 10, 20].map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setAmount(v)}
-                    className={`flex-1 py-2 rounded-xl font-mono text-xs font-bold tracking-wider border transition-all ${
-                      amount === v
-                        ? 'bg-primaryviolet text-white border-primaryviolet'
-                        : 'bg-bglight border-cardborder text-textsecondary hover:border-primaryviolet/40'
-                    }`}
-                  >
-                    {v} USDC
-                  </button>
-                ))}
-              </div>
+            <div className="mt-6 flex items-baseline justify-between">
+              <label htmlFor="topup-amount" className="field-label">
+                Amount
+              </label>
+              <span className="tabular font-display text-3xl font-bold">{amount.toFixed(2)} USDC</span>
             </div>
-
-            {/* Badge */}
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-primaryviolet-light border border-primaryviolet/20">
-              <span className="material-symbols-outlined text-sm text-primaryviolet">hub</span>
-              <p className="font-mono text-[10px] font-bold text-primaryviolet tracking-wider">
-                {isDemoMode ? 'CUSTODIA STELLAR — MODO DEMO' : 'DEPÓSITO DE RECARGA COSMOPAY'}
-              </p>
+            <input
+              id="topup-amount"
+              type="range"
+              min={1}
+              max={50}
+              step={0.5}
+              value={amount}
+              onChange={(e) => setAmount(parseFloat(e.target.value))}
+              className="mt-3 w-full"
+            />
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              {[5, 10, 20].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={amount === v}
+                  onClick={() => setAmount(v)}
+                  className={`min-h-[44px] rounded-xl border text-sm font-semibold ${amount === v ? 'border-signal bg-signal-dim' : 'border-line text-ink-muted'}`}
+                >
+                  {v} USDC
+                </button>
+              ))}
             </div>
-
-            {/* Confirm */}
-            <button
-              type="button"
-              disabled={actionLoading}
-              onClick={() => void handleStartTopUp()}
-              className="w-full py-3.5 rounded-full bg-primaryviolet text-white font-sans font-bold text-sm uppercase tracking-wider shadow-[0_4px_16px_rgba(105,65,255,0.35)] hover:bg-primaryviolet-hover disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-            >
-              <span className="material-symbols-outlined text-base">add_circle</span>
-              {isDemoMode ? 'CONFIRMAR RECARGA (DEMO)' : 'GENERAR INTENCIÓN DE PAGO'}
+            <p className="mt-4 text-sm text-ink-muted">Added to the same payment channel. Unused USDC still comes back when you finish.</p>
+            <button type="button" onClick={() => void start()} disabled={actionLoading} className="btn-primary mt-6 w-full">
+              {simulated ? `Simulate ${amount.toFixed(2)} USDC deposit` : 'Continue'}
             </button>
           </>
         ) : (
-          /* Payment Intent Step in API Mode */
-          <div className="flex flex-col gap-4 font-mono text-xs">
-            <div className="p-4 bg-bglight rounded-2xl border border-cardborder text-center">
-              <span className="text-textsecondary text-[10px] block mb-1">PAGÁ TU RECARGA DE</span>
-              <span className="font-display text-xl font-bold text-primaryviolet">{intent.amount} {intent.asset}</span>
-              {intent.qr && (
-                <img src={intent.qr} alt="QR Recarga" className="w-36 h-36 mx-auto my-3 object-contain rounded-lg" />
-              )}
-            </div>
-
-            {intent.sep7Uri && (
-              <a
-                href={intent.sep7Uri}
-                target="_blank"
-                rel="noreferrer"
-                className="py-2.5 px-4 rounded-xl bg-primaryviolet text-white text-center font-bold text-xs uppercase tracking-wider hover:bg-primaryviolet-hover transition-all"
-              >
-                ABRIR WALLET (SEP-7)
+          <div className="mt-6 flex flex-col gap-4">
+            {intent.qr && (
+              <div className="mx-auto rounded-2xl bg-ink p-3">
+                <img src={intent.qr} alt="Top-up QR code" className="h-40 w-40" />
+              </div>
+            )}
+            {intent.paymentUri && !simulated && (
+              <a href={intent.paymentUri} className="btn-ghost">
+                Open in wallet
               </a>
             )}
-
-            <div>
-              <label className="block text-[11px] text-textsecondary mb-1">HASH DE TRANSACCIÓN</label>
-              <input
-                type="text"
-                value={txHashInput}
-                onChange={(e) => setTxHashInput(e.target.value)}
-                placeholder="0xtx_hash..."
-                className="w-full px-3 py-2 rounded-xl border border-cardborder text-xs text-textprimary focus:outline-none focus:border-primaryviolet"
-              />
-            </div>
-
-            <button
-              type="button"
-              disabled={actionLoading}
-              onClick={() => void handleConfirmTopUp()}
-              className="w-full py-3 rounded-full bg-tealbrand text-white font-bold text-xs uppercase tracking-wider hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-            >
-              {actionLoading ? (
-                <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
-              ) : (
-                <span className="material-symbols-outlined text-sm">check_circle</span>
-              )}
-              CONFIRMAR RECARGA EN SERVIDOR
+            {!simulated && (
+              <label className="flex flex-col gap-2">
+                <span className="field-label">Transaction hash</span>
+                <input
+                  id="topup-tx"
+                  value={txHash}
+                  onChange={(e) => setTxHash(e.target.value)}
+                  placeholder="0x…"
+                  className="min-h-[48px] rounded-xl border border-line bg-space-950 px-3 font-mono text-sm"
+                />
+              </label>
+            )}
+            <button type="button" onClick={() => void confirm()} disabled={actionLoading || (!simulated && !txHash.trim())} className="btn-primary w-full">
+              {simulated ? 'Simulate deposit' : 'Confirm top-up'}
             </button>
           </div>
         )}
 
         {error && (
-          <div className="p-3 rounded-xl bg-alerta/10 border border-alerta/20 font-mono text-xs text-alerta">
+          <p role="alert" className="mt-4 rounded-xl border border-alert/40 bg-alert/10 p-3 text-sm text-alert">
             {error}
-          </div>
+          </p>
         )}
       </div>
     </div>

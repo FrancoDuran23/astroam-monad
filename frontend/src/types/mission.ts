@@ -1,6 +1,7 @@
-// ── Core domain types for ASTROAM mission flow ──────────────────────────────
+// ── Core domain types for the AstroAm mission flow ──────────────────────────────
 
-export type Network = 'stellar:testnet' | 'stellar:pubnet'
+/** `<chain>:<name>` of the payment rail, e.g. "monad:testnet" or "demo:local". */
+export type Network = string
 
 export type MissionStatus =
   | 'pending_payment'
@@ -45,28 +46,35 @@ export type Mission = {
   status: MissionStatus
   paymentStatus?: 'pending' | 'paid' | 'failed'
   depositTxHash?: string
+  depositExplorerUrl?: string
   // live state
   balanceUsdc: number      // remaining
   consumedUsdc: number
   consumedMb: number
   esimStatus: 'active' | 'paused' | 'disabled' | 'not_provisioned'
   network: Network
-  channelId: string        // Soroban channel id
+  channelId: string        // payment channel opened by the deposit
   iccid?: string
   esim?: PublicEsimInfo
   isMock?: boolean
   closeTxHash?: string
+  closeExplorerUrl?: string
+  settledUsdc?: number
+  refundedUsdc?: number
   createdAt: string        // ISO timestamp
 }
 
 export type UsageEvent = {
   id: string
   timestamp: string        // ISO timestamp
+  kind: 'usage' | 'topup'
   mb: number
   amountUsdc: number
-  status: 'liquidated'
-  txId: string             // abbreviated mock tx hash
-  explorerUrl?: string     // filled when real backend available
+  /** signed: a voucher covers it; rejected: the channel could not pay. */
+  status: 'signed' | 'rejected' | 'settled'
+  /** Voucher signature or transaction id, shortened in the UI. */
+  txId: string
+  explorerUrl?: string
 }
 
 export type PaymentEvent = {
@@ -86,9 +94,12 @@ export type PaymentIntentInfo = {
   intentId: string
   amount: string
   asset: string
-  sep7Uri?: string
+  /** Address the deposit goes to (the payment channel contract). */
+  payTo?: string
+  /** Wallet deep link for the deposit. */
+  paymentUri?: string
   qr?: string
-  destination?: string
+  network?: string
   status: string
   isMock: boolean
 }
@@ -97,27 +108,29 @@ export type PaymentConfirmationResult = {
   valid: boolean
   status: string
   depositTxHash?: string
+  explorerUrl?: string
+  channelId?: string
 }
 
 export type FinishResult = {
   txHash?: string
+  explorerUrl?: string
   status: 'closing' | 'refund_pending' | 'settling' | 'completed' | 'failed'
+  closeKind?: string
+  settledUsdc?: number
+  refundedUsdc?: number
+  /** @deprecated kept for the offline demo; use refundedUsdc. */
   refundAmountUsdc?: number
 }
 
 export type BackendCapabilities = {
   backendAvailable: boolean
   network: string
-  stage: number
-  channelConfigured: boolean
-  voucherAgentAvailable: boolean
-  paymentServerReady: boolean
-  voucherAgentReady: boolean
+  paymentRail: string
+  paymentsLive: boolean
   channelReady: boolean
   citrusReady: boolean
   connectivityProvider: 'fake' | 'citrus'
-  cosmoPayStatus: 'live' | 'mock' | 'unavailable'
-  cosmoPayMode: 'live' | 'mock' | 'unavailable'
   citrusStatus: 'live' | 'unavailable'
   meteringMode: 'real' | 'demo' | 'unavailable'
   reconciliationAvailable: boolean
