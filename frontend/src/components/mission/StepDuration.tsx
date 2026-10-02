@@ -48,7 +48,7 @@ export default function StepDuration({ startDate, endDate, onChange }: Props) {
                 key={label}
                 type="button"
                 onClick={() => setQuick(days)}
-                className={`px-5 py-2.5 rounded-full font-mono text-xs font-bold tracking-widest transition-all duration-200 ${
+                className={`px-5 py-2.5 min-h-[44px] rounded-full font-mono text-xs font-bold tracking-widest transition-all duration-200 ${
                   active
                     ? 'bg-primaryviolet text-white shadow-[0_0_16px_rgba(123,92,255,0.5)]'
                     : 'bg-warmneutral border border-cardborder text-textsecondary hover:border-primaryviolet/50 hover:text-white'
@@ -72,7 +72,7 @@ export default function StepDuration({ startDate, endDate, onChange }: Props) {
             value={startDate}
             min={todayStr}
             onChange={(e) => handleStart(e.target.value)}
-            className="h-12 px-4 rounded-xl border border-cardborder bg-warmneutral font-mono text-sm text-textprimary focus:outline-none focus:border-primaryviolet focus:ring-2 focus:ring-primaryviolet/25 transition-all"
+            className="h-12 px-4 rounded-xl border border-[#6B6E9E] bg-warmneutral font-mono text-sm text-textprimary focus:outline-none focus:border-primaryviolet focus:ring-2 focus:ring-primaryviolet/25 transition-all"
           />
         </div>
         <div className="flex flex-col gap-2">
@@ -84,7 +84,7 @@ export default function StepDuration({ startDate, endDate, onChange }: Props) {
             value={endDate}
             min={startDate}
             onChange={(e) => handleEnd(e.target.value)}
-            className="h-12 px-4 rounded-xl border border-cardborder bg-warmneutral font-mono text-sm text-textprimary focus:outline-none focus:border-primaryviolet focus:ring-2 focus:ring-primaryviolet/25 transition-all"
+            className="h-12 px-4 rounded-xl border border-[#6B6E9E] bg-warmneutral font-mono text-sm text-textprimary focus:outline-none focus:border-primaryviolet focus:ring-2 focus:ring-primaryviolet/25 transition-all"
           />
         </div>
       </div>

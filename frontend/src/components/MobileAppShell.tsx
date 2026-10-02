@@ -36,13 +36,13 @@ export default function MobileAppShell({
               <button
                 type="button"
                 onClick={() => navigate(-1)}
-                className="w-9 h-9 rounded-full bg-cardbg border border-cardborder flex items-center justify-center text-textsecondary hover:text-white hover:border-primaryviolet/50 transition-all shrink-0"
+                className="w-11 h-11 rounded-full bg-cardbg border border-cardborder flex items-center justify-center text-textsecondary hover:text-white hover:border-primaryviolet/50 transition-all shrink-0"
                 aria-label="Go back"
               >
                 <span className="material-symbols-outlined text-lg">arrow_back</span>
               </button>
             )}
-            <a href="/" className="flex items-center gap-2 group shrink-0">
+            <a href="/" className="flex items-center gap-2 py-2.5 group shrink-0">
               <img src={logoSrc} alt="AstroAm" className="h-6 sm:h-7 object-contain group-hover:scale-105 transition-transform" />
             </a>
             {title && (

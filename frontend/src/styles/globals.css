@@ -53,6 +53,14 @@ body {
   animation: twinkle 3.2s ease-in-out infinite;
 }
 
+h1, h2, h3, h4 {
+  text-wrap: balance;
+}
+
+a, button, input, select, textarea, label {
+  touch-action: manipulation;
+}
+
 input[type='date']::-webkit-calendar-picker-indicator {
   filter: invert(0.85);
 }

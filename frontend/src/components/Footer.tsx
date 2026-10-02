@@ -21,9 +21,9 @@ export default function Footer() {
 
         {/* Nav links */}
         <div className="flex items-center gap-6 font-mono text-xs text-textsecondary">
-          <a href="#how-it-works" className="hover:text-white transition-colors">HOW IT WORKS</a>
-          <a href="#technology" className="hover:text-white transition-colors">TECHNOLOGY</a>
-          <a href="#cockpit" className="hover:text-white transition-colors">COCKPIT</a>
+          <a href="#how-it-works" className="py-3.5 hover:text-white transition-colors">HOW IT WORKS</a>
+          <a href="#technology" className="py-3.5 hover:text-white transition-colors">TECHNOLOGY</a>
+          <a href="#cockpit" className="py-3.5 hover:text-white transition-colors">COCKPIT</a>
         </div>
 
       </div>

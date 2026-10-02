@@ -247,7 +247,7 @@ export default function MissionSetupPage() {
                         value={txHashInput}
                         onChange={(e) => setTxHashInput(e.target.value)}
                         placeholder="0x…"
-                        className="w-full mb-3 px-4 py-3 rounded-xl border border-cardborder bg-warmneutral font-mono text-xs text-textprimary focus:outline-none focus:border-primaryviolet"
+                        className="w-full mb-3 px-4 py-3 rounded-xl border border-[#6B6E9E] bg-warmneutral font-mono text-xs text-textprimary focus:outline-none focus:border-primaryviolet"
                       />
                     </>
                   )}
@@ -266,7 +266,7 @@ export default function MissionSetupPage() {
               </>
             )}
 
-            <p className="text-center font-mono text-[10px] text-textsecondary/70">Intent {shortTx(paymentIntent.intentId)}</p>
+            <p className="text-center font-mono text-[11px] text-textsecondary">Intent {shortTx(paymentIntent.intentId)}</p>
           </div>
         )}
 

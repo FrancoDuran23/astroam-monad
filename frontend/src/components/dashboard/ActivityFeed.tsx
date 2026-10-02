@@ -60,9 +60,9 @@ export default function ActivityFeed({ events, networkLabel }: Props) {
                       {shortTx(ev.txId)} ↗
                     </a>
                   ) : (
-                    <span className="font-mono text-[10px] font-semibold text-textsecondary/70">{shortTx(ev.txId)}</span>
+                    <span className="font-mono text-[10px] font-semibold text-textsecondary">{shortTx(ev.txId)}</span>
                   ))}
-                <span className="font-mono text-[9px] text-[#B9A6FF]/80 font-medium">{networkLabel}</span>
+                <span className="font-mono text-[10px] text-[#B9A6FF] font-medium">{networkLabel}</span>
               </div>
             </div>
 

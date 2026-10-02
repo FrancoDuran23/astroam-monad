@@ -138,7 +138,7 @@ export default function ActiveMissionPage() {
                     type="button"
                     disabled={actionLoading}
                     onClick={() => void handleCompleteSubmit()}
-                    className="flex-1 py-3 rounded-full bg-alerta text-white font-sans font-bold text-xs uppercase tracking-wider shadow-[0_0_20px_rgba(255,107,122,0.45)] hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5 min-h-[44px]"
+                    className="flex-1 py-3 rounded-full bg-[#C8323F] text-white font-sans font-bold text-xs uppercase tracking-wider shadow-[0_0_20px_rgba(255,107,122,0.45)] hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5 min-h-[44px]"
                   >
                     {actionLoading && <span className="material-symbols-outlined text-sm animate-spin">refresh</span>}
                     END MISSION
@@ -319,7 +319,7 @@ export default function ActiveMissionPage() {
         </div>
       )}
       {!isCompleted && !isClosing && (
-        <p className="mb-6 text-center font-mono text-[10px] text-textsecondary/70">
+        <p className="mb-6 text-center font-mono text-[11px] text-textsecondary">
           “Use {DEMO_TRAFFIC_MB} MB” simulates a reading from the carrier.
           {travelerSigns && ' The app signs a voucher for it first, with no wallet popup.'}
         </p>
@@ -377,7 +377,7 @@ export default function ActiveMissionPage() {
           type="button"
           onClick={() => setShowTechDetails(!showTechDetails)}
           aria-expanded={showTechDetails}
-          className="w-full flex items-center justify-between font-mono text-xs font-bold text-textsecondary uppercase tracking-widest hover:text-white transition-colors"
+          className="w-full min-h-[44px] flex items-center justify-between font-mono text-xs font-bold text-textsecondary uppercase tracking-widest hover:text-white transition-colors"
         >
           <span>TECHNICAL DETAILS</span>
           <span className="material-symbols-outlined text-base">{showTechDetails ? 'expand_less' : 'expand_more'}</span>

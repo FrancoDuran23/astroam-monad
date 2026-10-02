@@ -16,9 +16,9 @@ export default function FinalCTA() {
         />
         <div className="absolute w-[320px] h-[320px] rounded-full bg-gradient-to-tr from-primaryviolet/25 via-tealbrand/10 to-transparent blur-2xl" />
         {/* Sparkles orbiting the portal */}
-        <span className="absolute top-[12%] left-[30%] text-starlight text-xl animate-twinkle">✦</span>
-        <span className="absolute bottom-[18%] right-[22%] text-[#B9A6FF] text-lg animate-twinkle" style={{ animationDelay: '1.1s' }}>✦</span>
-        <span className="absolute top-[40%] right-[8%] text-tealbrand text-sm animate-twinkle" style={{ animationDelay: '2s' }}>✦</span>
+        <span aria-hidden="true" className="absolute top-[12%] left-[30%] text-starlight text-xl animate-twinkle">✦</span>
+        <span aria-hidden="true" className="absolute bottom-[18%] right-[22%] text-[#B9A6FF] text-lg animate-twinkle" style={{ animationDelay: '1.1s' }}>✦</span>
+        <span aria-hidden="true" className="absolute top-[40%] right-[8%] text-tealbrand text-sm animate-twinkle" style={{ animationDelay: '2s' }}>✦</span>
       </div>
 
       {/* Content */}

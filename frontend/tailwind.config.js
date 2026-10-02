@@ -13,8 +13,8 @@ export default {
         textprimary: '#F3F1FF',
         textsecondary: '#A6A3C9',
         primaryviolet: {
-          DEFAULT: '#7B5CFF',
-          hover: '#8F74FF',
+          DEFAULT: '#6A45FF',
+          hover: '#5B36F0',
           light: 'rgba(123, 92, 255, 0.16)',
           dim: 'rgba(123, 92, 255, 0.10)',
         },

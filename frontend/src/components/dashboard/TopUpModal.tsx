@@ -59,7 +59,7 @@ export default function TopUpModal({ onClose }: Props) {
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="w-8 h-8 rounded-full bg-warmneutral border border-cardborder flex items-center justify-center hover:border-primaryviolet/50 transition-colors"
+            className="w-11 h-11 rounded-full bg-warmneutral border border-cardborder flex items-center justify-center hover:border-primaryviolet/50 transition-colors"
           >
             <span className="material-symbols-outlined text-sm text-textsecondary">close</span>
           </button>
@@ -83,7 +83,7 @@ export default function TopUpModal({ onClose }: Props) {
                 step={0.5}
                 value={amount}
                 onChange={(e) => setAmount(parseFloat(e.target.value))}
-                className="w-full accent-primaryviolet"
+                className="w-full h-11 accent-primaryviolet"
               />
               <div className="flex justify-between font-mono text-[10px] text-textsecondary">
                 <span>1 USDC</span>
@@ -98,7 +98,7 @@ export default function TopUpModal({ onClose }: Props) {
                     type="button"
                     aria-pressed={amount === v}
                     onClick={() => setAmount(v)}
-                    className={`flex-1 py-2 rounded-xl font-mono text-xs font-bold tracking-wider border transition-all ${
+                    className={`flex-1 py-2 min-h-[44px] rounded-xl font-mono text-xs font-bold tracking-wider border transition-all ${
                       amount === v
                         ? 'bg-primaryviolet text-white border-primaryviolet shadow-[0_0_14px_rgba(123,92,255,0.5)]'
                         : 'bg-warmneutral border-cardborder text-textsecondary hover:border-primaryviolet/50'
@@ -159,7 +159,7 @@ export default function TopUpModal({ onClose }: Props) {
                   value={txHashInput}
                   onChange={(e) => setTxHashInput(e.target.value)}
                   placeholder="0x…"
-                  className="w-full px-3 py-2 rounded-xl border border-cardborder bg-warmneutral text-xs text-textprimary focus:outline-none focus:border-primaryviolet"
+                  className="w-full px-3 py-2 min-h-[44px] rounded-xl border border-[#6B6E9E] bg-warmneutral text-xs text-textprimary focus:outline-none focus:border-primaryviolet"
                 />
               </div>
             )}

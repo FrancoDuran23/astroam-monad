@@ -46,7 +46,7 @@ export default function StepBudget({
               onChange('dailyLimitUsdc', newBudget)
             }
           }}
-          className="w-full accent-primaryviolet"
+          className="w-full h-11 accent-primaryviolet"
         />
         <div className="flex justify-between font-mono text-[10px] text-textsecondary">
           <span>1 USDC</span>
@@ -98,7 +98,7 @@ export default function StepBudget({
           step={0.5}
           value={dailyLimitUsdc}
           onChange={(e) => onChange('dailyLimitUsdc', parseFloat(e.target.value))}
-          className="w-full accent-tealbrand"
+          className="w-full h-11 accent-tealbrand"
         />
         <div className="flex justify-between font-mono text-[10px] text-textsecondary">
           <span>0.5 USDC</span>

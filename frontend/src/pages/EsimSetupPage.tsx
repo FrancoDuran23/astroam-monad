@@ -174,7 +174,7 @@ export default function EsimSetupPage() {
                 <button
                   type="button"
                   onClick={() => copyToClipboard(esim.lpaString, 'lpa')}
-                  className="px-3 py-2 rounded-xl bg-cardbg border border-cardborder text-[#B9A6FF] hover:border-primaryviolet/60 font-mono text-xs font-semibold flex items-center gap-1 transition-all shrink-0 min-h-[40px]"
+                  className="px-3 py-2 rounded-xl bg-cardbg border border-cardborder text-[#B9A6FF] hover:border-primaryviolet/60 font-mono text-xs font-semibold flex items-center gap-1 transition-all shrink-0 min-h-[44px]"
                 >
                   <span className="material-symbols-outlined text-sm">
                     {copiedLpa ? 'check' : 'content_copy'}
@@ -194,7 +194,7 @@ export default function EsimSetupPage() {
                 <button
                   type="button"
                   onClick={() => copyToClipboard(esim.iccid, 'iccid')}
-                  className="px-3 py-2 rounded-xl bg-cardbg border border-cardborder text-[#B9A6FF] hover:border-primaryviolet/60 font-mono text-xs font-semibold flex items-center gap-1 transition-all shrink-0 min-h-[40px]"
+                  className="px-3 py-2 rounded-xl bg-cardbg border border-cardborder text-[#B9A6FF] hover:border-primaryviolet/60 font-mono text-xs font-semibold flex items-center gap-1 transition-all shrink-0 min-h-[44px]"
                 >
                   <span className="material-symbols-outlined text-sm">
                     {copiedIccid ? 'check' : 'content_copy'}

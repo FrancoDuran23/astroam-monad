@@ -77,7 +77,7 @@ export default function ProblemSection() {
           <span className="w-2 h-2 rounded-full bg-primaryviolet" />
           <span className="w-1.5 h-1.5 rounded-full bg-cardborder" />
           <span className="w-1.5 h-1.5 rounded-full bg-cardborder" />
-          <span className="font-mono text-[10px] text-textsecondary/60 ml-2">SWIPE FOR MORE &rarr;</span>
+          <span className="font-mono text-xs text-textsecondary ml-2">SWIPE FOR MORE &rarr;</span>
         </div>
       </div>
     </section>

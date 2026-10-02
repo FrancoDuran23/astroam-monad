@@ -8,7 +8,7 @@ export default function Header() {
       <div className="max-w-7xl mx-auto h-20 px-6 md:px-12 flex items-center justify-between">
 
         {/* Logo */}
-        <a href="/" className="flex items-center gap-3.5 group">
+        <a href="/" className="flex items-center gap-3.5 py-1.5 group">
           <img
             src={logoSrc}
             alt="AstroAm"
@@ -21,13 +21,13 @@ export default function Header() {
 
         {/* Nav links */}
         <nav className="hidden md:flex items-center gap-8">
-          <a href="#how-it-works" className="text-sm font-medium text-textsecondary hover:text-white transition-colors">
+          <a href="#how-it-works" className="py-2 text-sm font-medium text-textsecondary hover:text-white transition-colors">
             How it works
           </a>
-          <a href="#technology" className="text-sm font-medium text-textsecondary hover:text-white transition-colors">
+          <a href="#technology" className="py-2 text-sm font-medium text-textsecondary hover:text-white transition-colors">
             Technology
           </a>
-          <a href="#cockpit" className="text-sm font-medium text-textsecondary hover:text-white transition-colors">
+          <a href="#cockpit" className="py-2 text-sm font-medium text-textsecondary hover:text-white transition-colors">
             Live demo
           </a>
         </nav>
