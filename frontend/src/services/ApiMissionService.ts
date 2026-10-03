@@ -1,6 +1,7 @@
 import { envConfig } from '../config/env'
 import type {
   BackendCapabilities,
+  CancelResult,
   FinishResult,
   Mission,
   PaymentConfirmationResult,
@@ -209,6 +210,15 @@ export class ApiMissionService {
       credentials: 'include',
     })
     return handleResponse<FinishResult>(res)
+  }
+
+  async cancelMission(missionId: string): Promise<CancelResult> {
+    const res = await fetch(`${this.baseUrl}/missions/${missionId}/cancel`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    })
+    return handleResponse<CancelResult>(res)
   }
 
   async triggerDemoTraffic(missionId: string, bytes = 500_000): Promise<unknown> {

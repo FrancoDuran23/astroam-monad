@@ -494,6 +494,48 @@ export class MissionProductService {
     }
   }
 
+  /**
+   * Gives the whole deposit back for a trip that was paid but never started
+   * (no eSIM, no usage). The rail closes the channel with nothing to settle.
+   */
+  async cancelMission(missionId: string) {
+    const mission = await this.load(missionId)
+    const result = () => ({
+      status: 'cancelled' as const,
+      txHash: mission.closeTxHash,
+      explorerUrl: mission.closeExplorerUrl,
+      refundedUsdc: mission.refundedUsdc,
+    })
+    if (mission.status === 'cancelled') return result()
+    if (mission.paymentStatus !== 'paid' || !mission.channelId) {
+      throw new Error('Only a paid trip can be cancelled and refunded')
+    }
+    if (mission.status !== 'paid' || mission.iccid || BigInt(mission.meteredBytes || '0') > 0n) {
+      throw new Error('This trip already started; finish it instead so what you used is settled')
+    }
+
+    const outcome = await this.rail.closeChannel(mission.channelId, 0n)
+    // The channel was already closed outside the app (e.g. scripts/close-escrow.ts):
+    // the chain is the source of truth, so the record just catches up.
+    const alreadySettled = outcome.kind === 'failed' && outcome.detail.includes('already settled')
+    if ((outcome.kind === 'failed' && !alreadySettled) || outcome.kind === 'blocked') {
+      throw new Error(`Could not refund the deposit: ${outcome.detail}`)
+    }
+
+    mission.status = 'cancelled'
+    mission.esimStatus = 'disabled'
+    mission.settledUsdc = 0
+    if (outcome.kind === 'closed') {
+      mission.closeTxHash = outcome.txHash
+      mission.closeExplorerUrl = outcome.explorerUrl
+      mission.refundedUsdc = rawToUsdc(outcome.refundedRaw)
+    } else if (!alreadySettled) {
+      mission.refundedUsdc = mission.budgetUsdc
+    }
+    await this.repo.save(mission)
+    return result()
+  }
+
   private getOrCreateMeterService(mission: ProductMission, channelId: string): IntegratedMeterService {
     const existing = this.meters.get(mission.id)
     if (existing) return existing

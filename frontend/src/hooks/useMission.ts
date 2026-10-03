@@ -5,6 +5,7 @@ import { apiMissionService } from '../services/ApiMissionService'
 import { DEMO_TRAFFIC_MB } from '../utils/missionUtils'
 import type {
   BackendCapabilities,
+  CancelResult,
   FinishResult,
   Mission,
   PaymentConfirmationResult,
@@ -266,6 +267,20 @@ export function useMission() {
     }
   }
 
+  /** Gives the whole deposit back for a trip that was paid but never activated. */
+  const cancel = async (): Promise<CancelResult> => {
+    if (!mission) throw new Error('No active mission')
+    setActionLoading(true)
+    try {
+      const res = await apiMissionService.cancelMission(mission.id)
+      apiMissionService.clearSavedMissionId()
+      setMission(null)
+      return res
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   const travelerSigns = !isDemoMode && caps?.voucherSigning === 'traveler'
 
   useEffect(() => {
@@ -356,6 +371,7 @@ export function useMission() {
     confirmTopUpPayment,
     togglePause,
     finish,
+    cancel,
     simulate,
     reset,
   }

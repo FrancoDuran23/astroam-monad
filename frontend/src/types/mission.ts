@@ -11,6 +11,7 @@ export type MissionStatus =
   | 'closing'
   | 'refund_pending'
   | 'completed'
+  | 'cancelled'
   | 'failed'
   | 'error'
 
@@ -138,6 +139,13 @@ export type FinishResult = {
   refundedUsdc?: number
   /** @deprecated kept for the offline demo; use refundedUsdc. */
   refundAmountUsdc?: number
+}
+
+export type CancelResult = {
+  status: 'cancelled'
+  txHash?: string
+  explorerUrl?: string
+  refundedUsdc?: number
 }
 
 export type BackendCapabilities = {

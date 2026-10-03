@@ -13,6 +13,7 @@ export type ProductMissionStatus =
   | 'active'
   | 'paused'
   | 'completed'
+  | 'cancelled'
   | 'failed'
 
 export type TopUpRecord = {
