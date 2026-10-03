@@ -44,6 +44,8 @@ if (typeof window !== 'undefined') {
     'GATEWAY_TOKEN',
     'MPP_SECRET_KEY',
     'COSMOS_PAY_API_KEY',
+    'MONAD_PAYEE_PRIVATE_KEY',
+    'MONAD_DEPLOYER_PRIVATE_KEY',
   ]
 
   for (const key of forbiddenKeys) {

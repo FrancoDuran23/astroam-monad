@@ -187,6 +187,21 @@ export class ApiMissionService {
     return handleResponse<PaymentConfirmationResult & { balanceUsdc?: number }>(res)
   }
 
+  async getAuthorization(missionId: string): Promise<{ voucherSigning: 'rail' | 'traveler'; authorizedUsdc: number }> {
+    const res = await fetch(`${this.baseUrl}/missions/${missionId}/authorization`, { credentials: 'include' })
+    return handleResponse(res)
+  }
+
+  async submitAuthorization(missionId: string, cumulativeAmount: string, signature: string): Promise<{ authorizedUsdc: number }> {
+    const res = await fetch(`${this.baseUrl}/missions/${missionId}/authorizations`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      body: JSON.stringify({ cumulativeAmount, signature }),
+    })
+    return handleResponse(res)
+  }
+
   async finishMission(missionId: string): Promise<FinishResult> {
     const res = await fetch(`${this.baseUrl}/missions/${missionId}/finish`, {
       method: 'POST',

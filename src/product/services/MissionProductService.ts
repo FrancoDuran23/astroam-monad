@@ -2,7 +2,7 @@ import type { ConnectivityProvider } from '../../providers/connectivity/Connecti
 import type { MissionRepository } from '../persistence/MissionRepository.ts'
 import type { Capabilities, DestinationInfo, ProductMission, PublicEsimInfo } from '../types/mission.ts'
 import { IntegratedMeterService } from '../../meter/meter-service.ts'
-import type { ChannelBalancePort } from '../../services/PolicyEnforcer.ts'
+import { computeCostRaw, type ChannelBalancePort } from '../../services/PolicyEnforcer.ts'
 import { createConnectivitySession, type ConnectivitySession } from '../../models/ConnectivitySession.ts'
 import { runReconciliation } from '../../jobs/reconciliation.ts'
 import { parseNonNegativeIntegerRaw, pricePerMibFromPerMbRaw } from '../../shared/money.ts'
@@ -91,6 +91,7 @@ export class MissionProductService {
       network: this.rail.network,
       paymentRail: this.rail.displayName,
       paymentsLive: railReady,
+      voucherSigning: this.rail.voucherSigning,
       channelReady: railReady,
       citrusReady,
       connectivityProvider: citrusReady ? 'citrus' : 'fake',
@@ -174,6 +175,7 @@ export class MissionProductService {
       network: this.rail.network,
       status: 'pending',
       isMock: intent.isMock,
+      evm: intent.evm,
     }
   }
 
@@ -373,7 +375,27 @@ export class MissionProductService {
       network: this.rail.network,
       status: 'pending',
       isMock: intent.isMock,
+      evm: intent.evm,
     }
+  }
+
+  /**
+   * A voucher the traveler's app signed with its session key for the running
+   * total it authorizes. Data is credited only up to the highest one.
+   */
+  async authorizeUsage(missionId: string, cumulativeAmount: string, signature: string) {
+    const mission = await this.load(missionId)
+    if (!mission.channelId) throw new Error('This mission has no payment channel yet')
+    if (!this.rail.submitTravelerVoucher) throw new Error('This payment rail signs its own vouchers')
+    const result = await this.rail.submitTravelerVoucher({ channelId: mission.channelId, cumulativeAmount, signature })
+    if (!result.accepted) throw new Error(`Voucher not accepted: ${result.reason}`)
+    return { authorizedUsdc: Number(result.authorizedRaw) / 1e7 }
+  }
+
+  async getAuthorization(missionId: string) {
+    const mission = await this.load(missionId)
+    const authorizedRaw = mission.channelId && this.rail.getAuthorizedRaw ? await this.rail.getAuthorizedRaw(mission.channelId) : 0n
+    return { voucherSigning: this.rail.voucherSigning, authorizedUsdc: Number(authorizedRaw) / 1e7 }
   }
 
   async confirmTopUpPayment(missionId: string, intentId: string, txHash: string) {
@@ -433,7 +455,10 @@ export class MissionProductService {
       throw unavailable('payments are simulated; configure a live payment rail for live mode')
     }
 
-    const outcome = await this.rail.closeChannel(mission.channelId)
+    // Settle exactly what was used, in integer raw units (never a float).
+    const pricePerMbRaw = envRaw('PRICE_PER_MB_RAW') ?? usdcToRaw(mission.destination.pricePerMbUsdc)
+    const usedRaw = computeCostRaw(BigInt(mission.meteredBytes || '0'), pricePerMbRaw)
+    const outcome = await this.rail.closeChannel(mission.channelId, usedRaw)
     if (outcome.kind === 'failed' || outcome.kind === 'blocked') {
       throw new Error(`Could not close the payment channel: ${outcome.detail}`)
     }

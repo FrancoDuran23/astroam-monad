@@ -44,6 +44,7 @@ export class FakeRail implements PaymentRail {
   readonly network: Network;
   readonly displayName = "Simulated payments";
   readonly isLive = false;
+  readonly voucherSigning = "rail" as const;
   private readonly payTo: string;
   private readonly intents = new Map<string, FakeIntent>();
   private readonly channels = new Map<string, FakeChannel>();
@@ -133,7 +134,7 @@ export class FakeRail implements PaymentRail {
     return channel.voucherPort;
   }
 
-  async closeChannel(channelId: string): Promise<CloseOutcome> {
+  async closeChannel(channelId: string, settleRaw?: bigint): Promise<CloseOutcome> {
     const channel = this.channels.get(channelId);
     if (channel === undefined) return { kind: "failed", reason: "channel_not_found", detail: channelId };
     if (channel.closed) return { kind: "failed", reason: "close_error", detail: "channel already closed" };
@@ -142,11 +143,12 @@ export class FakeRail implements PaymentRail {
       return { kind: "nothing_to_close", detail: "no voucher was ever signed for this channel" };
     }
     channel.closed = true;
+    const settled = settleRaw === undefined || settleRaw > channel.highestSignedRaw ? channel.highestSignedRaw : settleRaw;
     return {
       kind: "closed",
-      txHash: `demo_close_${hex(`${channelId}:${channel.highestSignedRaw}`, 16)}`,
-      settledRaw: channel.highestSignedRaw,
-      refundedRaw: channel.depositRaw - channel.highestSignedRaw,
+      txHash: `demo_close_${hex(`${channelId}:${settled}`, 16)}`,
+      settledRaw: settled,
+      refundedRaw: channel.depositRaw - settled,
     };
   }
 

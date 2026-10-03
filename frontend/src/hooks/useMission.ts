@@ -20,6 +20,8 @@ export function useMission() {
   const [loading, setLoading] = useState<boolean>(true)
   const [backendError, setBackendError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<boolean>(false)
+  /** USDC the traveler's app has authorized AstroAm to charge (Monad). */
+  const [authorizedUsdc, setAuthorizedUsdc] = useState<number | null>(null)
 
   const isDemoMode = envConfig.mode === 'demo'
 
@@ -253,6 +255,8 @@ export function useMission() {
           refundedUsdc: mission.balanceUsdc,
         }
       }
+      // Authorize everything used so far, so the close can settle all of it.
+      if (travelerSigns) await authorizeUpTo(mission.consumedUsdc ?? 0)
       const res = await apiMissionService.finishMission(mission.id)
       const fresh = await apiMissionService.getMission(mission.id)
       setMission(fresh)
@@ -262,8 +266,42 @@ export function useMission() {
     }
   }
 
+  const travelerSigns = !isDemoMode && caps?.voucherSigning === 'traveler'
+
+  useEffect(() => {
+    if (!travelerSigns || !mission?.id || !mission.channelId) return
+    apiMissionService
+      .getAuthorization(mission.id)
+      .then((a) => setAuthorizedUsdc(a.authorizedUsdc))
+      .catch(() => undefined)
+  }, [travelerSigns, mission?.id, mission?.channelId])
+
+  /**
+   * Monad: the app signs a voucher with its session key so AstroAm can charge
+   * up to `targetUsdc` (capped at the deposit). Signed ahead of usage, so data
+   * keeps flowing; whatever is not used is refunded at close.
+   */
+  const authorizeUpTo = async (targetUsdc: number): Promise<void> => {
+    if (!travelerSigns || !mission) return
+    // viem loads only when a Monad trip needs it.
+    const { hasSessionKey, recordAuthorization, signAuthorization } = await import('../chain/monad')
+    if (!hasSessionKey(mission.id)) {
+      throw new Error('This browser does not hold the session key for this trip, so it cannot authorize more usage.')
+    }
+    const voucher = await signAuthorization(mission.id, Math.min(targetUsdc, mission.budgetUsdc))
+    if (!voucher) return
+    const res = await apiMissionService.submitAuthorization(mission.id, voucher.cumulativeAmount, voucher.signature)
+    recordAuthorization(mission.id, voucher.cumulativeAmount)
+    setAuthorizedUsdc(res.authorizedUsdc)
+  }
+
   const simulate = async (): Promise<void> => {
     if (!mission) return
+    if (travelerSigns) {
+      // Authorize the next batch plus a small margin before it flows.
+      const batchUsdc = DEMO_TRAFFIC_MB * mission.destination.pricePerMbUsdc
+      await authorizeUpTo((mission.consumedUsdc ?? 0) + batchUsdc * 1.1 + 0.01)
+    }
     if (isDemoMode) {
       const newState = demoMissionService.simulateConsumption({ mission, events })
       setMission(newState.mission)
@@ -307,6 +345,8 @@ export function useMission() {
     actionLoading,
     backendError,
     isDemoMode,
+    travelerSigns,
+    authorizedUsdc,
     retryBackend: loadBackendState,
     createMission,
     createPaymentIntent,

@@ -90,6 +90,21 @@ export type MissionState = {
   events: UsageEvent[]
 }
 
+/** What the traveler's EVM wallet sends for a deposit (PAYMENT_RAIL=monad). */
+export type EvmDepositPlan = {
+  kind: 'evm'
+  chainId: number
+  chainName: string
+  rpcUrl: string
+  explorer: string
+  token: string
+  tokenDecimals: number
+  contract: string
+  escrowId: string
+  amountAtomic: string
+  method: 'deposit' | 'topUp'
+}
+
 export type PaymentIntentInfo = {
   intentId: string
   amount: string
@@ -102,6 +117,8 @@ export type PaymentIntentInfo = {
   network?: string
   status: string
   isMock: boolean
+  /** Present when the wallet sends the deposit itself (Monad). */
+  evm?: EvmDepositPlan
 }
 
 export type PaymentConfirmationResult = {
@@ -128,6 +145,8 @@ export type BackendCapabilities = {
   network: string
   paymentRail: string
   paymentsLive: boolean
+  /** "traveler": the app signs usage vouchers with its session key. */
+  voucherSigning?: 'rail' | 'traveler'
   channelReady: boolean
   citrusReady: boolean
   connectivityProvider: 'fake' | 'citrus'

@@ -34,6 +34,12 @@ export const topupConfirmationSchema = z.object({
   txHash: z.string().min(1),
 })
 
+export const authorizationSchema = z.object({
+  /** Running total authorized, in token units, exactly as signed. */
+  cumulativeAmount: z.string().regex(/^(0|[1-9]\d*)$/),
+  signature: z.string().regex(/^0x[0-9a-fA-F]{130}$/),
+})
+
 export const demoTrafficSchema = z.object({
   bytes: z.number().positive(),
 })

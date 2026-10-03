@@ -1,0 +1,8 @@
+{
+  "url": "http://127.0.0.1:5173",
+  "routes": ["/", "/mission/new"],
+  "viewports": ["390x844", "1440x900"],
+  "minText": 12,
+  "measure": [45, 80],
+  "out": "../.kero-audit"
+}
