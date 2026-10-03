@@ -171,6 +171,10 @@ type SessionRecord = {
   tokenDecimals: number
   /** Highest cumulative amount signed so far, in token units. */
   authorizedAtomic: string
+  /** Wallet that paid the deposit, and where to read its USDC balance after close. */
+  traveler?: Address
+  token?: Address
+  rpcUrl?: string
 }
 
 const sessionStorageKey = (missionId: string) => `astroam_session_${missionId}`
@@ -224,6 +228,7 @@ export async function sendDeposit(
   const { wallet, reader, chain, account } = await connect(plan)
   const token = getAddress(plan.token)
   const contract = getAddress(plan.contract)
+  saveSession(missionId, { ...sessionFor(missionId, plan), traveler: account, token, rpcUrl: plan.rpcUrl })
   const amount = BigInt(plan.amountAtomic)
 
   // Every transaction here pays gas in MON: say so before MetaMask shows a
@@ -263,6 +268,18 @@ export async function sendDeposit(
   const receipt = await reader.waitForTransactionReceipt({ hash })
   if (receipt.status !== 'success') throw new Error('The deposit transaction reverted.')
   return hash
+}
+
+/**
+ * USDC the traveler's wallet holds right now, read from the chain. Null when this
+ * browser never made the deposit (no wallet recorded for the trip).
+ */
+export async function readTravelerUsdc(missionId: string): Promise<{ address: Address; usdc: number } | null> {
+  const session = loadSession(missionId)
+  if (!session?.traveler || !session.token || !session.rpcUrl) return null
+  const reader = createPublicClient({ transport: http(session.rpcUrl) })
+  const raw = await reader.readContract({ address: session.token, abi: erc20Abi, functionName: 'balanceOf', args: [session.traveler] })
+  return { address: session.traveler, usdc: Number(raw) / 10 ** session.tokenDecimals }
 }
 
 // ── Usage authorization ──────────────────────────────────────────────────────

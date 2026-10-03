@@ -83,4 +83,5 @@ La cuenta cuadra con las 5 misiones guardadas en `data/missions.json`: el viajer
 ## 5. Estado de ejecución
 - **Paso 1 hecho.** Cierre del escrow huérfano: tx `0x2215e659ab853821226e731b069fafd55c9dcc4a10658d36750772998a1bf84e`, 5 USDC devueltos (viajero 3,675 → 8,675; escrow 0).
 - **Paso 2 hecho.** `POST /api/missions/:id/cancel` (`MissionProductService.cancelMission`): solo misiones `paid` sin eSIM ni consumo, idempotente, y si el canal ya estaba cerrado fuera de la app solo actualiza el registro. Estado nuevo `cancelled`. En el frontend, `MissionSetupPage` muestra el aviso "UNFINISHED TRIP" con **Activate eSIM** y **Cancel and refund**. Cuatro tests nuevos; el backend queda en 198 pasan, 0 fallan, 2 saltados. La misión `j3s42x` quedó en `cancelled` sin enviar ninguna tx.
-- **Pendiente:** paso 3 (mostrar el saldo y el reembolso en "Mission settled", 3 decimales) y paso 4 (prueba end-to-end).
+- **Paso 3 hecho.** "Mission settled" muestra pagado y reembolsado con 3 decimales, el saldo de USDC de la wallet antes y ahora (leído de la cadena) y el aviso de mirar Tokens → USDC. Solo aparece en misiones depositadas desde este navegador con esta versión (la wallet se guarda al depositar); en las anteriores se ve el modal de siempre.
+- **Pendiente:** paso 4 (prueba end-to-end).

@@ -241,6 +241,24 @@ export function useMission() {
     }
   }
 
+  // The wallet's on-chain USDC, so the traveler sees the refund land. Never blocks the close.
+  const walletUsdc = async (missionId: string) => {
+    try {
+      const { readTravelerUsdc } = await import('../chain/monad')
+      return await readTravelerUsdc(missionId)
+    } catch {
+      return null
+    }
+  }
+
+  // The RPC can lag a block behind the close: read again once if the refund is not there yet.
+  const walletUsdcAfter = async (missionId: string, beforeUsdc: number, refundedUsdc: number) => {
+    const first = await walletUsdc(missionId)
+    if (!first || refundedUsdc <= 0 || first.usdc > beforeUsdc) return first
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    return (await walletUsdc(missionId)) ?? first
+  }
+
   const finish = async (): Promise<FinishResult> => {
     if (!mission) throw new Error('No active mission')
     setActionLoading(true)
@@ -258,10 +276,12 @@ export function useMission() {
       }
       // Authorize everything used so far, so the close can settle all of it.
       if (travelerSigns) await authorizeUpTo(mission.consumedUsdc ?? 0)
+      const before = travelerSigns ? await walletUsdc(mission.id) : null
       const res = await apiMissionService.finishMission(mission.id)
       const fresh = await apiMissionService.getMission(mission.id)
       setMission(fresh)
-      return res
+      const after = before ? await walletUsdcAfter(mission.id, before.usdc, res.refundedUsdc ?? 0) : null
+      return before && after ? { ...res, wallet: { address: before.address, beforeUsdc: before.usdc, afterUsdc: after.usdc } } : res
     } finally {
       setActionLoading(false)
     }
