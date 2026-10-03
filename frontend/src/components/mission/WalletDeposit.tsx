@@ -17,12 +17,8 @@ type Props = {
   label: string
 }
 
-function hasInjectedWallet(): boolean {
-  return typeof window !== 'undefined' && typeof window.ethereum?.request === 'function'
-}
-
 /**
- * Pays a deposit or top-up from the traveler's browser wallet on Monad:
+ * Pays a deposit or top-up from the traveler's MetaMask on Monad:
  * approve USDC, then deposit into (or top up) the trip's escrow.
  */
 export default function WalletDeposit({ missionId, plan, onDeposited, label }: Props) {
@@ -64,13 +60,11 @@ export default function WalletDeposit({ missionId, plan, onDeposited, label }: P
         )}
       </ol>
 
-      {!hasInjectedWallet() && (
-        <p className="rounded-xl border border-starlight/40 bg-starlight/10 p-3 text-sm text-starlight">
-          No browser wallet found. Install MetaMask or Rabby, add test USDC from faucet.circle.com and MON for gas from faucet.monad.xyz.
-        </p>
-      )}
+      <p className="rounded-xl border border-starlight/40 bg-starlight/10 p-3 text-sm text-starlight">
+        You pay with MetaMask: on a phone it opens the app, on a computer it uses the extension or shows a QR. Test USDC comes from faucet.circle.com and MON for gas from faucet.monad.xyz.
+      </p>
 
-      <button type="button" onClick={() => void pay()} disabled={step !== null || !hasInjectedWallet()} className="w-full py-3.5 rounded-full bg-primaryviolet text-white font-sans font-bold text-sm uppercase tracking-wider shadow-[0_0_24px_rgba(123,92,255,0.55)] hover:bg-primaryviolet-hover disabled:opacity-50 transition-all flex items-center justify-center gap-2 min-h-[48px]">
+      <button type="button" onClick={() => void pay()} disabled={step !== null} className="w-full py-3.5 rounded-full bg-primaryviolet text-white font-sans font-bold text-sm uppercase tracking-wider shadow-[0_0_24px_rgba(123,92,255,0.55)] hover:bg-primaryviolet-hover disabled:opacity-50 transition-all flex items-center justify-center gap-2 min-h-[48px]">
         <span className="material-symbols-outlined text-[20px]">account_balance_wallet</span>
         {step ? STEP_LABEL[step] : label}
       </button>

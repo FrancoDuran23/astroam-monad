@@ -1,6 +1,11 @@
 // Monad wallet flow for PAYMENT_RAIL=monad.
 //
-// 1. Deposit: the traveler's wallet (MetaMask, Rabby…) approves USDC and calls
+// The wallet is MetaMask, reached through MetaMask Connect
+// (@metamask/connect-evm): on a desktop browser it talks to the extension, on
+// a phone it opens the MetaMask app by deeplink (or shows a QR to scan from
+// another device). It exposes an EIP-1193 provider, so viem works on top of it.
+//
+// 1. Deposit: the traveler's wallet approves USDC and calls
 //    `deposit(escrowId, amount, sessionSigner)` on AstroAmEscrow. The session
 //    signer is a key this app generates and keeps in the browser.
 // 2. Authorize: while the trip runs, the app signs EIP-712 vouchers with that
@@ -9,6 +14,7 @@
 // 3. Close: AstroAm settles what was actually used (never more than the last
 //    voucher) in one transaction and the rest goes back to the wallet.
 
+import { createEVMClient, type MetamaskConnectEVM } from '@metamask/connect-evm'
 import {
   createPublicClient,
   createWalletClient,
@@ -16,6 +22,7 @@ import {
   defineChain,
   getAddress,
   http,
+  numberToHex,
   type Address,
   type Hex,
 } from 'viem'
@@ -83,17 +90,18 @@ const VOUCHER_TYPES = {
   ],
 } as const
 
-type InjectedProvider = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>
-}
+const USER_REJECTED = 4001
+const REQUEST_PENDING = -32002
 
-declare global {
-  interface Window {
-    ethereum?: InjectedProvider
-  }
+function errorCode(error: unknown): number | undefined {
+  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'number') return error.code
+  return undefined
 }
 
 export function walletError(error: unknown): string {
+  const code = errorCode(error)
+  if (code === USER_REJECTED) return 'You rejected the request in MetaMask.'
+  if (code === REQUEST_PENDING) return 'MetaMask already has a request waiting. Open it and confirm or reject it.'
   if (error && typeof error === 'object' && 'shortMessage' in error && typeof error.shortMessage === 'string') {
     return error.shortMessage
   }
@@ -110,19 +118,45 @@ function chainOf(plan: EvmDepositPlan) {
   })
 }
 
+// One MetaMask Connect client per page: it keeps the session (and the mobile
+// pairing) alive between the approve and the deposit transactions.
+let evmClient: Promise<MetamaskConnectEVM> | null = null
+
+function metamaskClient(plan: EvmDepositPlan): Promise<MetamaskConnectEVM> {
+  evmClient ??= createEVMClient({
+    dapp: { name: 'AstroAm', url: window.location.origin },
+    api: { supportedNetworks: { [numberToHex(plan.chainId)]: plan.rpcUrl } },
+  }).catch((error: unknown) => {
+    evmClient = null
+    throw error
+  })
+  return evmClient
+}
+
 async function connect(plan: EvmDepositPlan) {
-  const eth = window.ethereum
-  if (!eth?.request) throw new Error('No browser wallet found. Install MetaMask or Rabby to pay with USDC on Monad.')
   const chain = chainOf(plan)
-  const wallet = createWalletClient({ chain, transport: custom(eth) })
-  const [account] = await wallet.requestAddresses()
-  if (!account) throw new Error('The wallet did not return an account.')
-  try {
-    await wallet.switchChain({ id: chain.id })
-  } catch {
-    await wallet.addChain({ chain })
-    await wallet.switchChain({ id: chain.id })
+  const chainHex = numberToHex(chain.id)
+  const client = await metamaskClient(plan)
+  const { accounts, chainId: activeChain } = await client.connect({ chainIds: [chainHex] })
+  const account = accounts[0]
+  if (!account) throw new Error('MetaMask did not return an account.')
+
+  // switchChain adds Monad to MetaMask when it is not there yet. A rejection
+  // by the traveler (4001) is rethrown as is: it must not prompt a second time.
+  if (activeChain.toLowerCase() !== chainHex) {
+    await client.switchChain({
+      chainId: chainHex,
+      chainConfiguration: {
+        chainId: chainHex,
+        chainName: chain.name,
+        nativeCurrency: chain.nativeCurrency,
+        rpcUrls: [plan.rpcUrl],
+        blockExplorerUrls: [plan.explorer],
+      },
+    })
   }
+
+  const wallet = createWalletClient({ chain, transport: custom(client.getProvider()) })
   const reader = createPublicClient({ chain, transport: http(plan.rpcUrl) })
   return { wallet, reader, chain, account: getAddress(account) }
 }
@@ -191,6 +225,12 @@ export async function sendDeposit(
   const token = getAddress(plan.token)
   const contract = getAddress(plan.contract)
   const amount = BigInt(plan.amountAtomic)
+
+  // Every transaction here pays gas in MON: say so before MetaMask shows a
+  // failed estimate.
+  if ((await reader.getBalance({ address: account })) === 0n) {
+    throw new Error(`This wallet has no MON for gas on ${plan.chainName}. Get some at faucet.monad.xyz.`)
+  }
 
   const balance = await reader.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [account] })
   if (balance < amount) {
