@@ -12,7 +12,8 @@
     "meter:demo": "node src/meter/demo-meter.ts",
     "contracts:build": "forge build --root contracts",
     "contracts:test": "forge test --root contracts",
-    "monad:deploy": "node scripts/deploy-monad-escrow.ts"
+    "monad:deploy": "node scripts/deploy-monad-escrow.ts",
+    "monad:close-escrow": "node scripts/close-escrow.ts"
   },
   "dependencies": {
     "axios": "1.20.0",
