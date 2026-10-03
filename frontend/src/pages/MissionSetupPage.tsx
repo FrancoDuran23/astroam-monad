@@ -10,7 +10,7 @@ import ActivationOverlay from '../components/mission/ActivationOverlay'
 import WalletDeposit from '../components/mission/WalletDeposit'
 import { useMission } from '../hooks/useMission'
 import { addDays, shortTx, today } from '../utils/missionUtils'
-import type { PaymentIntentInfo, WizardData, WizardStep } from '../types/mission'
+import type { CancelResult, PaymentIntentInfo, WizardData, WizardStep } from '../types/mission'
 
 const STEP_LABELS = ['DESTINATION', 'DATES', 'BUDGET', 'CONFIRM']
 
@@ -28,7 +28,7 @@ const CARD = 'bg-cardbg glass rounded-3xl border border-cardborder shadow-[0_0_4
 
 export default function MissionSetupPage() {
   const navigate = useNavigate()
-  const { mission, createMission, createPaymentIntent, confirmPayment, activate, backendError, retryBackend, isDemoMode, caps } = useMission()
+  const { mission, createMission, createPaymentIntent, confirmPayment, activate, cancel, backendError, retryBackend, isDemoMode, caps } = useMission()
 
   const [step, setStep] = useState<WizardStep>(1)
   const [data, setData] = useState<WizardData>(DEFAULT_DATA)
@@ -40,6 +40,13 @@ export default function MissionSetupPage() {
   const [paymentIntent, setPaymentIntent] = useState<PaymentIntentInfo | null>(null)
   const [txHashInput, setTxHashInput] = useState('')
   const [paymentValidating, setPaymentValidating] = useState(false)
+
+  // A trip whose deposit went through but was never activated (the page was closed
+  // or the eSIM failed): its USDC sits in the escrow until the trip is activated or cancelled.
+  const [cancelResult, setCancelResult] = useState<CancelResult | null>(null)
+  const [recovering, setRecovering] = useState(false)
+  const stalledTrip =
+    !isDemoMode && !paymentIntent && !activating && !preparing && mission?.status === 'paid' && !mission.iccid ? mission : null
 
   const simulated = isDemoMode || !caps?.paymentsLive
   const networkLabel = simulated ? 'Simulated payments' : (caps?.paymentRail ?? 'Monad Testnet')
@@ -122,6 +129,32 @@ export default function MissionSetupPage() {
     }
   }
 
+  async function handleCancelStalled() {
+    setError(null)
+    setRecovering(true)
+    try {
+      setCancelResult(await cancel())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not refund the deposit')
+    } finally {
+      setRecovering(false)
+    }
+  }
+
+  async function handleActivateStalled() {
+    setError(null)
+    setRecovering(true)
+    try {
+      setActivating(true)
+      await activate()
+    } catch (e) {
+      setActivating(false)
+      setError(e instanceof Error ? e.message : 'Could not activate the eSIM')
+    } finally {
+      setRecovering(false)
+    }
+  }
+
   const title = paymentIntent
     ? 'Load your fuel'
     : step === 1
@@ -152,6 +185,51 @@ export default function MissionSetupPage() {
             <span className="material-symbols-outlined text-sm">refresh</span>
             RETRY
           </button>
+        </div>
+      )}
+
+      {/* Paid but never activated */}
+      {stalledTrip && (
+        <div role="alert" className="mb-6 p-6 bg-cardbg glass rounded-3xl border border-starlight/40">
+          <span className="font-mono text-[11px] font-bold text-starlight tracking-widest uppercase block mb-2">[ UNFINISHED TRIP ]</span>
+          <p className="font-sans text-sm text-textsecondary mb-4 leading-relaxed">
+            Your {stalledTrip.destination.name} deposit of {stalledTrip.budgetUsdc} USDC went through but the eSIM was never activated.
+            Activate it now, or cancel and get the whole deposit back.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              type="button"
+              disabled={recovering}
+              onClick={() => void handleActivateStalled()}
+              className="px-6 py-3 rounded-full bg-primaryviolet text-white font-sans font-semibold text-xs uppercase tracking-wider hover:bg-primaryviolet-hover disabled:opacity-50 transition-all min-h-[44px]"
+            >
+              ACTIVATE eSIM
+            </button>
+            <button
+              type="button"
+              disabled={recovering}
+              onClick={() => void handleCancelStalled()}
+              className="px-6 py-3 rounded-full border border-starlight/50 text-starlight font-sans font-semibold text-xs uppercase tracking-wider hover:bg-starlight/10 disabled:opacity-50 transition-all min-h-[44px]"
+            >
+              {recovering ? 'REFUNDING…' : 'CANCEL AND REFUND'}
+            </button>
+          </div>
+        </div>
+      )}
+      {cancelResult && (
+        <div role="status" className="mb-6 p-6 bg-cardbg glass rounded-3xl border border-tealbrand/40">
+          <span className="font-mono text-[11px] font-bold text-tealbrand tracking-widest uppercase block mb-2">[ DEPOSIT REFUNDED ]</span>
+          <p className="font-sans text-sm text-textsecondary leading-relaxed">
+            {cancelResult.refundedUsdc?.toFixed(3)} USDC went back to your wallet. Look under Tokens → USDC; the Activity tab may not list incoming refunds.
+            {cancelResult.explorerUrl && (
+              <>
+                {' '}
+                <a href={cancelResult.explorerUrl} target="_blank" rel="noreferrer" className="text-[#B9A6FF] underline">
+                  See the transaction
+                </a>
+              </>
+            )}
+          </p>
         </div>
       )}
 

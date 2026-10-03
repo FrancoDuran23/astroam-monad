@@ -156,12 +156,24 @@ export default function ActiveMissionPage() {
                 <div className="bg-warmneutral p-4 rounded-2xl border border-cardborder flex flex-col gap-2">
                   <div className="flex justify-between">
                     <span className="text-textsecondary">PAID FOR DATA</span>
-                    <span className="font-bold text-textprimary">{fmtUsdc(finishResult.settledUsdc ?? mission.consumedUsdc, 2)} USDC</span>
+                    <span className="font-bold text-textprimary">{fmtUsdc(finishResult.settledUsdc ?? mission.consumedUsdc, 3)} USDC</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-textsecondary">BACK TO YOUR WALLET</span>
-                    <span className="font-bold text-tealbrand">{fmtUsdc(finishResult.refundedUsdc ?? mission.balanceUsdc, 2)} USDC</span>
+                    <span className="font-bold text-tealbrand">{fmtUsdc(finishResult.refundedUsdc ?? mission.balanceUsdc, 3)} USDC</span>
                   </div>
+                  {finishResult.wallet && (
+                    <>
+                      <div className="flex justify-between border-t border-cardborder pt-2">
+                        <span className="text-textsecondary">WALLET USDC BEFORE</span>
+                        <span className="font-bold text-textprimary">{fmtUsdc(finishResult.wallet.beforeUsdc, 3)} USDC</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-textsecondary">WALLET USDC NOW</span>
+                        <span className="font-bold text-tealbrand">{fmtUsdc(finishResult.wallet.afterUsdc, 3)} USDC</span>
+                      </div>
+                    </>
+                  )}
                   {finishResult.txHash && (
                     <div className="flex justify-between gap-3">
                       <span className="text-textsecondary">CLOSE TX</span>
@@ -177,7 +189,9 @@ export default function ActiveMissionPage() {
                 </div>
                 <p className="font-sans text-xs text-textsecondary">
                   {finishResult.status === 'completed'
-                    ? 'Done. The unused part of your deposit was released to your wallet.'
+                    ? finishResult.wallet
+                      ? `Done. The unused part of your deposit went to ${finishResult.wallet.address.slice(0, 6)}…${finishResult.wallet.address.slice(-4)}. In MetaMask look under Tokens → USDC; the Activity tab does not list incoming refunds.`
+                      : 'Done. The unused part of your deposit was released to your wallet.'
                     : 'The refund is being processed in the background.'}
                 </p>
                 <button

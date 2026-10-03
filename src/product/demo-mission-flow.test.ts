@@ -108,3 +108,50 @@ test('la eSIM de demo trae una imagen de QR válida', async () => {
   assert.match(qr, /^data:image\/svg\+xml;base64,/)
   assert.match(Buffer.from(qr.split(',')[1]!, 'base64').toString('utf8'), /^<svg /)
 })
+
+async function paidMission(budgetUsdc: number): Promise<string> {
+  const { id } = await service.createMission({
+    destination: BRASIL,
+    startDate: '2026-10-01',
+    endDate: '2026-10-04',
+    budgetUsdc,
+    dailyLimitUsdc: budgetUsdc,
+  })
+  const intent = await service.createPaymentIntent(id)
+  await service.confirmPayment(id, intent.intentId, 'demo_tx_hash')
+  return id
+}
+
+test('cancelar una misión pagada sin activar devuelve todo el depósito', async () => {
+  const id = await paidMission(5)
+  const res = await service.cancelMission(id)
+  assert.equal(res.status, 'cancelled')
+  assert.equal(res.refundedUsdc, 5)
+  const mission = await service.getMission(id)
+  assert.equal(mission.status, 'cancelled')
+  assert.equal(mission.settledUsdc, 0)
+})
+
+test('cancelar dos veces es idempotente', async () => {
+  const id = await paidMission(5)
+  await service.cancelMission(id)
+  const again = await service.cancelMission(id)
+  assert.equal(again.status, 'cancelled')
+  assert.equal(again.refundedUsdc, 5)
+})
+
+test('no se cancela una misión ya activa: se termina para liquidar lo usado', async () => {
+  const id = await activeMission(5)
+  await assert.rejects(service.cancelMission(id), /already started/)
+})
+
+test('no se cancela una misión sin depósito confirmado', async () => {
+  const { id } = await service.createMission({
+    destination: BRASIL,
+    startDate: '2026-10-01',
+    endDate: '2026-10-04',
+    budgetUsdc: 5,
+    dailyLimitUsdc: 5,
+  })
+  await assert.rejects(service.cancelMission(id), /Only a paid trip/)
+})
