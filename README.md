@@ -29,7 +29,7 @@ Built for **Monad Metropolis 2026** (track: Consumer Products & Payments) by
 | Part | State |
 |---|---|
 | App (landing + trip flow), mission API, metering, cutoff policy, vouchers | **Working**, end to end, with simulated payments and a simulated eSIM |
-| Payment channel on Monad: `AstroAmEscrow` contract, `MonadRail`, wallet flow in the app | **Implemented and tested on a local chain** (Foundry + anvil end to end). **Not yet deployed to Monad testnet**: needs a funded deployer (see below). Default stays `PAYMENT_RAIL=fake` |
+| Payment channel on Monad: `AstroAmEscrow` contract, `MonadRail`, wallet flow in the app | **Implemented and tested on a local chain** (Foundry + anvil end to end). **Deployed on Monad testnet** at [`0xb357ef37…8292`](https://testnet.monadvision.com/address/0xb357ef379227c4113d3dc439af587437ff3e8292) (v2, with `claim`). Default stays `PAYMENT_RAIL=fake` |
 | Citrus Mobile eSIM provider | Implemented, **not yet tested against the real API** (no sandbox; needs a funded reseller account) |
 
 Everything simulated is labeled in the UI ("Simulated payments", "Simulated QR").
@@ -58,10 +58,12 @@ and the Monad payment channel was added (`contracts/`, `src/rails/MonadRail.ts`,
    popup per MB, nothing on-chain per MB. Data is credited only up to the
    latest voucher (`authorization_required` otherwise); if the deposit can't
    cover a reading, data pauses (`channel_exhausted`).
-5. **End the trip.** AstroAm closes the escrow in one transaction: it receives
-   what was actually used, never more than the latest voucher, and the rest
-   goes back to your wallet. If AstroAm never closes, you take everything back
-   with `refund()` after 30 days.
+5. **End the trip.** During the trip AstroAm may claim what the vouchers
+   already cover; the escrow stays open. At the end it closes the escrow in
+   one transaction: it receives what was actually used, never more than the
+   latest voucher, and the rest goes back to your wallet. If AstroAm never
+   closes, `refund()` returns whatever was not claimed 30 days after the last
+   activity (deposit, top-up or claim).
 
 ## Architecture
 
@@ -91,8 +93,11 @@ frontend/       React + Vite + Tailwind; starfield in components/StarfieldBackgr
 |---|---|---|
 | `deposit(escrowId, amount, signer)` | traveler | Locks USDC and registers the app's session key |
 | `topUp(escrowId, amount)` | traveler | Adds USDC to the same escrow |
-| `close(escrowId, voucherAmount, signature, settleAmount)` | AstroAm (payee) | Pays `settleAmount` (usage, ≤ the signed voucher) and refunds the rest |
-| `refund(escrowId)` | anyone, after the timeout | Returns the whole deposit to the traveler |
+| `claim(escrowId, voucherAmount, signature)` | AstroAm (payee) | Collects the part of the latest voucher not yet paid; the escrow stays open |
+| `close(escrowId, voucherAmount, signature, settleAmount)` | AstroAm (payee) | Pays the total `settleAmount` (usage: ≥ already claimed, ≤ the signed voucher) and refunds the rest |
+| `refund(escrowId)` | anyone, after the timeout | Returns what was not claimed to the traveler, once the timeout has passed since the last deposit, top-up or claim |
+
+Deployed addresses and the v1 → v2 changes: [`docs/despliegues-monad.md`](docs/despliegues-monad.md).
 
 Vouchers are EIP-712 `Voucher(bytes32 escrowId, uint256 cumulativeAmount)`,
 signed by the session key or the traveler's wallet. The API keeps the highest

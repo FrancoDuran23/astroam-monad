@@ -23,8 +23,11 @@ Documentación de referencia (en el repo de Solana):
 Ya funciona en Monad: depósito con clave de sesión, vales EIP-712, `close`
 con reembolso, `refund` por timeout (30 días), `topUp`, cancelación de
 misiones sin activar y webhooks de Citrus (`esim.defunded`,
-`esim.balance_depleted`). El contrato está desplegado en testnet
-(`0xc6ead43fdf838198854f7811658cc4edd50f7a0f`) y tiene 16 tests de Foundry.
+`esim.balance_depleted`). La v1 del contrato estaba en testnet en
+`0xc6ead43fdf838198854f7811658cc4edd50f7a0f` (16 tests de Foundry, sin
+`claim`). El actual es la v2, con `claim`, en
+`0xb357ef379227c4113d3dc439af587437ff3e8292` (36 tests); ver
+[`docs/despliegues-monad.md`](despliegues-monad.md).
 
 Qué cambia el fondo del problema:
 
@@ -68,10 +71,10 @@ transfiere al payee lo del vale que aún no se cobró y deja el escrow abierto.
 
 **Criterios de aceptación**
 
-- [ ] Dos `claim` sucesivos con vales crecientes pagan solo la diferencia.
-- [ ] Un vale menor o igual a `claimed` revierte.
-- [ ] Solo el payee puede llamar a `claim`.
-- [ ] El escrow sigue abierto después de un `claim`.
+- [x] Dos `claim` sucesivos con vales crecientes pagan solo la diferencia.
+- [x] Un vale menor o igual a `claimed` revierte.
+- [x] Solo el payee puede llamar a `claim`.
+- [x] El escrow sigue abierto después de un `claim`.
 
 ### A2. `close` y `refund` respetan lo ya cobrado
 
@@ -87,9 +90,9 @@ transfiere al payee lo del vale que aún no se cobró y deja el escrow abierto.
 
 **Criterios de aceptación**
 
-- [ ] `refund` después de un `claim` no devuelve lo cobrado.
-- [ ] `close` con `settleAmount < claimed` revierte.
-- [ ] Un `claim` reinicia la cuenta del timeout.
+- [x] `refund` después de un `claim` no devuelve lo cobrado.
+- [x] `close` con `settleAmount < claimed` revierte.
+- [x] Un `claim` reinicia la cuenta del timeout.
 
 ### A3. Tests de Foundry para claims
 
@@ -99,7 +102,7 @@ Agregar a `contracts/test/AstroAmEscrow.t.sol`: claims sucesivos, `close`
 después de claims, `refund` después de un claim, timeout reiniciado por un
 claim, `claim` de otra cuenta, vale de otra clave y firma maleable.
 
-- [ ] `npm run contracts:test` en verde con los casos nuevos.
+- [x] `npm run contracts:test` en verde con los casos nuevos.
 
 ### A4. Redesplegar en testnet y actualizar direcciones
 
@@ -109,10 +112,10 @@ El contrato es inmutable: hay que desplegar uno nuevo con
 `npm run monad:deploy`. Las misiones abiertas en el contrato viejo se cierran
 ahí.
 
-- [ ] Nueva dirección en `.env.example` y en el README.
-- [ ] Anotar en `docs/` la dirección vieja y la nueva, y qué pasa con los
+- [x] Nueva dirección en `.env.example` y en el README.
+- [x] Anotar en `docs/` la dirección vieja y la nueva, y qué pasa con los
       escrows abiertos en la vieja.
-- [ ] `MonadRail` apunta a la nueva y el ABI (`src/shared/monad/abi.ts`)
+- [x] `MonadRail` apunta a la nueva y el ABI (`src/shared/monad/abi.ts`)
       incluye `claim`.
 
 ---
