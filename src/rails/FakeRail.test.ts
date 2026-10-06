@@ -67,3 +67,37 @@ test("closing a channel with no voucher has nothing to settle", async () => {
   const { channelId } = await openChannel(rail);
   assert.equal((await rail.closeChannel(channelId)).kind, "nothing_to_close");
 });
+
+test("claim records claimedAtomic in memory and returns txHash and claimedAtomic", async () => {
+  const rail = new FakeRail();
+  const { channelId } = await openChannel(rail, 5);
+  const result = await rail.claim({
+    channelId,
+    voucherAmountAtomic: 1_500_000n,
+    signature: "0xmock_sig",
+  });
+  assert.match(result.txHash, /^0xmock_claim_\d+$/);
+  assert.equal(result.claimedAtomic, 1_500_000n);
+  assert.equal(rail.getClaimedAtomic(channelId), 1_500_000n);
+
+  // Subsequent claim updates claimedAtomic
+  const secondResult = await rail.claim({
+    channelId,
+    voucherAmountAtomic: 3_000_000n,
+    signature: "0xmock_sig_2",
+  });
+  assert.equal(secondResult.claimedAtomic, 3_000_000n);
+  assert.equal(rail.getClaimedAtomic(channelId), 3_000_000n);
+
+  // Reject on unknown channel
+  await assert.rejects(
+    async () => {
+      await rail.claim({
+        channelId: "0xunknown",
+        voucherAmountAtomic: 1_000_000n,
+        signature: "0xmock_sig",
+      });
+    },
+    { message: /Unknown demo channel/ }
+  );
+});

@@ -15,10 +15,12 @@ import type {
   DepositPurpose,
   PaymentRail,
 } from "./PaymentRail.ts";
+import { atomicToRaw, rawToAtomicFloor } from "../shared/monad/amounts.ts";
 
 type FakeChannel = {
   depositRaw: bigint;
   highestSignedRaw: bigint;
+  claimedAtomic: bigint;
   voucherPort: VoucherPort;
   closed: boolean;
 };
@@ -29,6 +31,7 @@ export type FakeRailOptions = {
   network?: Network;
   /** Address shown as the deposit destination. */
   payTo?: string;
+  now?: () => Date;
 };
 
 /** USDC (number) to raw units (1e-7 USDC). */
@@ -48,11 +51,13 @@ export class FakeRail implements PaymentRail {
   private readonly payTo: string;
   private readonly intents = new Map<string, FakeIntent>();
   private readonly channels = new Map<string, FakeChannel>();
+  private readonly now: () => Date;
   private seq = 0;
 
   constructor(options: FakeRailOptions = {}) {
     this.network = options.network ?? "demo:local";
     this.payTo = options.payTo ?? `0x${hex("astroam-demo-recipient", 20)}`;
+    this.now = options.now ?? (() => new Date());
   }
 
   async createDepositIntent(input: {
@@ -104,6 +109,7 @@ export class FakeRail implements PaymentRail {
     const channel: FakeChannel = {
       depositRaw: amountRaw,
       highestSignedRaw: 0n,
+      claimedAtomic: 0n,
       closed: false,
       voucherPort: undefined as unknown as VoucherPort,
     };
@@ -119,7 +125,15 @@ export class FakeRail implements PaymentRail {
       },
     };
     this.channels.set(channelId, channel);
-    return { valid: true, txHash: input.txHash, channelId, depositRaw: channel.depositRaw };
+    return {
+      valid: true,
+      txHash: input.txHash,
+      channelId,
+      depositRaw: channel.depositRaw,
+      travelerAddress: `0x${hex(`traveler:${intent.missionId}`, 20)}`,
+      sessionKey: `0x${hex(`session:${intent.missionId}`, 20)}`,
+      escrowActiveAt: this.now().toISOString(),
+    };
   }
 
   async getChannelDepositRaw(channelId: string): Promise<bigint> {
@@ -132,6 +146,66 @@ export class FakeRail implements PaymentRail {
     const channel = this.channels.get(channelId);
     if (channel === undefined) throw new Error(`Unknown demo channel ${channelId}`);
     return channel.voucherPort;
+  }
+
+  async submitTravelerVoucher(input: {
+    channelId: string;
+    cumulativeAmount: string;
+    signature: string;
+  }): Promise<{ accepted: true; authorizedRaw: bigint } | { accepted: false; reason: string }> {
+    const channel = this.channels.get(input.channelId);
+    if (!channel) return { accepted: false, reason: "channel_not_found" };
+    if (channel.closed) return { accepted: false, reason: "channel_closed" };
+    const amountAtomic = BigInt(input.cumulativeAmount);
+    const amountRaw = atomicToRaw(amountAtomic);
+    if (amountRaw > channel.depositRaw) return { accepted: false, reason: "exceeds_deposit" };
+    if (amountRaw > channel.highestSignedRaw) {
+      channel.highestSignedRaw = amountRaw;
+    }
+    return { accepted: true, authorizedRaw: channel.highestSignedRaw };
+  }
+
+  async getAuthorizedRaw(channelId: string): Promise<bigint> {
+    const channel = this.channels.get(channelId);
+    if (!channel) return 0n;
+    return channel.highestSignedRaw;
+  }
+
+  async claim(params: {
+    channelId: string;
+    voucherAmountAtomic: bigint;
+    signature: string;
+  }): Promise<{ txHash: string; claimedAtomic: bigint }> {
+    const channel = this.channels.get(params.channelId);
+    if (channel === undefined) throw new Error(`Unknown demo channel ${params.channelId}`);
+    if (channel.closed) throw new Error(`Channel already closed: ${params.channelId}`);
+    channel.claimedAtomic = params.voucherAmountAtomic;
+    return {
+      txHash: "0xmock_claim_" + Date.now(),
+      claimedAtomic: params.voucherAmountAtomic,
+    };
+  }
+
+  async readEscrowState(channelId: string): Promise<{
+    depositAtomic: bigint;
+    claimedAtomic: bigint;
+    settled: boolean;
+    activeAt?: number;
+  } | null> {
+    const channel = this.channels.get(channelId);
+    if (!channel) return null;
+    return {
+      depositAtomic: rawToAtomicFloor(channel.depositRaw),
+      claimedAtomic: channel.claimedAtomic,
+      settled: channel.closed,
+      activeAt: Math.floor(this.now().getTime() / 1000),
+    };
+  }
+
+  getClaimedAtomic(channelId: string): bigint {
+    const channel = this.channels.get(channelId);
+    if (channel === undefined) throw new Error(`Unknown demo channel ${channelId}`);
+    return channel.claimedAtomic;
   }
 
   async closeChannel(channelId: string, settleRaw?: bigint): Promise<CloseOutcome> {
@@ -149,6 +223,29 @@ export class FakeRail implements PaymentRail {
       txHash: `demo_close_${hex(`${channelId}:${settled}`, 16)}`,
       settledRaw: settled,
       refundedRaw: channel.depositRaw - settled,
+    };
+  }
+
+  private payeeBalanceAtomic = 0n;
+  private extraPayeeBalanceAtomic = 0n;
+  readonly swept = new Map<string, bigint>();
+
+  creditPayeeAtomic(amount: bigint): void {
+    this.extraPayeeBalanceAtomic += amount;
+  }
+
+  async sweep(input: { to: string; minAtomic: bigint }): Promise<{ txHash: string; amountAtomic: bigint } | null> {
+    let balance = this.extraPayeeBalanceAtomic;
+    for (const ch of this.channels.values()) {
+      balance += ch.claimedAtomic;
+    }
+    const current = balance - this.payeeBalanceAtomic;
+    if (current < input.minAtomic || current === 0n) return null;
+    this.payeeBalanceAtomic += current;
+    this.swept.set(input.to, (this.swept.get(input.to) ?? 0n) + current);
+    return {
+      txHash: `0xmock_sweep_${Date.now()}`,
+      amountAtomic: current,
     };
   }
 

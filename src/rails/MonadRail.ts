@@ -26,7 +26,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { VoucherPort } from "../meter/voucher-port.ts";
 import { buildUnsigned, message2SignedSchema, type Message2 } from "../shared/messages.ts";
 import type { Network } from "../shared/network.ts";
-import { astroAmEscrowAbi } from "../shared/monad/abi.ts";
+import { astroAmEscrowAbi, erc20Abi } from "../shared/monad/abi.ts";
 import { atomicToRaw, rawToAtomicCeil, rawToAtomicFloor, usdcToAtomic } from "../shared/monad/amounts.ts";
 import { MONAD_CHAIN_NAME, MONAD_USDC_DECIMALS } from "../shared/monad/constants.ts";
 import { monadTxUrl } from "../shared/monad/explorer.ts";
@@ -59,7 +59,15 @@ export type MonadRailOptions = {
   receiptTimeoutMs?: number;
 };
 
-type OnChainEscrow = { traveler: Address; signer: Address; deposit: bigint; claimed: bigint; settled: boolean };
+type OnChainEscrow = {
+  traveler: Address;
+  signer: Address;
+  deposit: bigint;
+  claimed: bigint;
+  settled: boolean;
+  openedAt: bigint;
+  lastActivityAt: bigint;
+};
 type StoredVoucher = { atomic: string; signature: Hex; signedAt: string };
 type Intent = { missionId: string; purpose: DepositPurpose; escrowId: Hex; amountAtomic: bigint };
 
@@ -123,13 +131,13 @@ export class MonadRail implements PaymentRail {
   }
 
   private async readEscrow(escrowId: Hex): Promise<OnChainEscrow> {
-    const [traveler, , settled, signer, deposit, claimed] = (await this.client.readContract({
+    const [traveler, openedAt, settled, signer, deposit, claimed, lastActivityAt] = (await this.client.readContract({
       address: this.opts.escrow,
       abi: astroAmEscrowAbi,
       functionName: "escrows",
       args: [escrowId],
     })) as readonly [Address, bigint, boolean, Address, bigint, bigint, bigint];
-    return { traveler, signer, settled, deposit, claimed };
+    return { traveler, signer, settled, deposit, claimed, openedAt, lastActivityAt };
   }
 
   async createDepositIntent(input: {
@@ -214,6 +222,9 @@ export class MonadRail implements PaymentRail {
       explorerUrl: this.explorerTxUrl(input.txHash),
       channelId: intent.escrowId,
       depositRaw: atomicToRaw(escrow.deposit),
+      travelerAddress: escrow.traveler,
+      sessionKey: escrow.signer,
+      escrowActiveAt: new Date(Number(escrow.lastActivityAt) * 1000).toISOString(),
     };
   }
 
@@ -298,6 +309,62 @@ export class MonadRail implements PaymentRail {
     };
   }
 
+  async claim(params: {
+    channelId: string;
+    voucherAmountAtomic: bigint;
+    signature: string;
+  }): Promise<{ txHash: string; claimedAtomic: bigint }> {
+    const formattedChannelId = params.channelId.startsWith("0x")
+      ? params.channelId
+      : `0x${params.channelId}`;
+    if (!BYTES32_RE.test(formattedChannelId)) {
+      throw new Error(`Invalid channelId: expected bytes32 hex string, got ${params.channelId}`);
+    }
+    const escrowId = formattedChannelId as Hex;
+    const signature = (params.signature.startsWith("0x")
+      ? params.signature
+      : `0x${params.signature}`) as Hex;
+
+    const { request } = await this.client.simulateContract({
+      account: this.account,
+      address: this.opts.escrow,
+      abi: astroAmEscrowAbi,
+      functionName: "claim",
+      args: [escrowId, params.voucherAmountAtomic, signature],
+    });
+    const hash = await this.wallet.writeContract(request);
+    const receipt = await this.client.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") {
+      throw new Error(`claim reverted: ${hash}`);
+    }
+
+    return {
+      txHash: (receipt as { hash?: string }).hash ?? receipt.transactionHash ?? hash,
+      claimedAtomic: params.voucherAmountAtomic,
+    };
+  }
+
+  async readEscrowState(channelId: string): Promise<{
+    depositAtomic: bigint;
+    claimedAtomic: bigint;
+    settled: boolean;
+    activeAt?: number;
+  } | null> {
+    const formattedChannelId = channelId.startsWith("0x") ? channelId : `0x${channelId}`;
+    if (!BYTES32_RE.test(formattedChannelId)) return null;
+    try {
+      const escrow = await this.readEscrow(formattedChannelId as Hex);
+      return {
+        depositAtomic: escrow.deposit,
+        claimedAtomic: escrow.claimed,
+        settled: escrow.settled,
+        activeAt: Number(escrow.lastActivityAt),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async closeChannel(channelId: string, settleRaw?: bigint): Promise<CloseOutcome> {
     const escrowId = channelId as Hex;
     let escrow: OnChainEscrow;
@@ -345,6 +412,38 @@ export class MonadRail implements PaymentRail {
     } catch (error) {
       return { kind: "failed", reason: "close_error", detail: error instanceof Error ? error.message.split("\n")[0]! : String(error) };
     }
+  }
+
+  async sweep(input: { to: string; minAtomic: bigint }): Promise<{ txHash: string; amountAtomic: bigint } | null> {
+    if (!isAddress(input.to)) {
+      throw new Error(`Invalid treasury address: ${input.to}`);
+    }
+    const toAddress = getAddress(input.to);
+    const balance = (await this.client.readContract({
+      address: this.opts.usdc,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [this.account.address],
+    })) as bigint;
+
+    if (balance === 0n || balance < input.minAtomic) return null;
+
+    const { request } = await this.client.simulateContract({
+      account: this.account,
+      address: this.opts.usdc,
+      abi: erc20Abi,
+      functionName: "transfer",
+      args: [toAddress, balance],
+    });
+    const hash = await this.wallet.writeContract(request);
+    const receipt = await this.client.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") {
+      throw new Error(`sweep reverted: ${hash}`);
+    }
+    return {
+      txHash: (receipt as { hash?: string }).hash ?? receipt.transactionHash ?? hash,
+      amountAtomic: balance,
+    };
   }
 
   explorerTxUrl(txHash: string): string | undefined {

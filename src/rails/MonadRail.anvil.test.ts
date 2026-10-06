@@ -203,3 +203,60 @@ test("never settles more than the traveler authorized", { skip }, async () => {
     assert.equal(outcome.refundedRaw, 15_000_000n);
   }
 });
+
+test("claim() pulls tranche on-chain, closeChannel settles remainder, and sweep() moves funds to treasury", { skip }, async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "monad-rail-"));
+  const rail = new MonadRail({ rpcUrl: RPC, chainId: 31337, explorer: "https://explorer.test", network: "monad:testnet", escrow, usdc, payeePrivateKey: PAYEE_KEY, dataDir });
+  const sessionKey = generatePrivateKey();
+  const session = privateKeyToAccount(sessionKey);
+  const intent = await rail.createDepositIntent({ missionId: "mis_claim_sweep", amountUsdc: 5, purpose: "mission" });
+  const escrowId = intent.evm!.escrowId as Hex;
+
+  const approve = await travelerWallet.writeContract({ address: usdc, abi: erc20Abi, functionName: "approve", args: [escrow, 5_000_000n] });
+  await client.waitForTransactionReceipt({ hash: approve });
+  const tx = await travelerWallet.writeContract({ address: escrow, abi: astroAmEscrowAbi, functionName: "deposit", args: [escrowId, 5_000_000n, session.address] });
+  assert.equal((await rail.confirmDeposit({ missionId: "mis_claim_sweep", intentId: intent.intentId, txHash: tx, purpose: "mission" })).valid, true);
+
+  // 1. App signs voucher for 2.5 USDC
+  const sig1 = await session.signTypedData({
+    domain: voucherDomain(31337, escrow),
+    types: VOUCHER_TYPES,
+    primaryType: "Voucher",
+    message: { escrowId, cumulativeAmount: 2_500_000n },
+  });
+  await rail.submitTravelerVoucher({ channelId: escrowId, cumulativeAmount: "2500000", signature: sig1 });
+
+  // 2. MonadRail.claim()
+  const payeeBalanceBefore = await balance(payee.address);
+  const claimRes = await rail.claim({ channelId: escrowId, voucherAmountAtomic: 2_500_000n, signature: sig1 });
+  assert.ok(claimRes.txHash);
+  assert.equal(claimRes.claimedAtomic, 2_500_000n);
+  assert.equal((await balance(payee.address)) - payeeBalanceBefore, 2_500_000n);
+
+  const state = await rail.readEscrowState(escrowId);
+  assert.equal(state?.claimedAtomic, 2_500_000n);
+  assert.equal(state?.settled, false);
+
+  // 3. App signs next voucher for 4.0 USDC and close settles it
+  const sig2 = await session.signTypedData({
+    domain: voucherDomain(31337, escrow),
+    types: VOUCHER_TYPES,
+    primaryType: "Voucher",
+    message: { escrowId, cumulativeAmount: 4_000_000n },
+  });
+  await rail.submitTravelerVoucher({ channelId: escrowId, cumulativeAmount: "4000000", signature: sig2 });
+
+  const closeOutcome = await rail.closeChannel(escrowId, 40_000_000n);
+  assert.equal(closeOutcome.kind, "closed");
+  if (closeOutcome.kind === "closed") {
+    assert.equal(closeOutcome.settledRaw, 40_000_000n);
+    assert.equal(closeOutcome.refundedRaw, 10_000_000n);
+  }
+
+  // 4. Sweep to treasury
+  const treasuryAddress = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as Address; // anvil dev account 1
+  const sweepRes = await rail.sweep({ to: treasuryAddress, minAtomic: 1_000_000n });
+  assert.ok(sweepRes);
+  assert.ok(sweepRes.amountAtomic >= 4_000_000n);
+  assert.equal(await balance(treasuryAddress), sweepRes.amountAtomic);
+});
