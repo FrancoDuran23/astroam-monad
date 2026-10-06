@@ -99,9 +99,16 @@ if (!Number.isInteger(timeout) || timeout <= 0) {
 if (!existsSync(ARTIFACT)) {
   await forgeBuild();
 }
-const compiled = JSON.parse(await readFile(ARTIFACT, "utf8")) as { bytecode: { object: Hex } };
+const compiled = JSON.parse(await readFile(ARTIFACT, "utf8")) as {
+  bytecode: { object: Hex };
+  abi: { type: string; name?: string }[];
+};
 if (!compiled.bytecode?.object || compiled.bytecode.object === "0x") {
   console.error(`Artifact ${ARTIFACT} has no bytecode. Run: forge build --root contracts`);
+  process.exit(1);
+}
+if (!compiled.abi?.some((item) => item.type === "function" && item.name === "claim")) {
+  console.error(`Artifact ${ARTIFACT} is stale (no claim function). Rebuild it: forge build --root contracts`);
   process.exit(1);
 }
 
