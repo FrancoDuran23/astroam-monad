@@ -82,6 +82,11 @@ export type CitrusDefundResult = {
   estimatedReturnUsd: number;
 };
 
+export type CitrusResellerBalance = {
+  balanceUsd: number;
+  currency: string;
+};
+
 export type CitrusClientOptions = {
   apiKey: string;
   baseUrl?: string;
@@ -172,6 +177,14 @@ export class CitrusClient {
     );
   }
 
+  /** Reads the reseller account wallet balance (C1). */
+  async getWalletBalance(): Promise<CitrusResellerBalance> {
+    const response = await this.request((signal) =>
+      this.http.get<Record<string, unknown>>(this.join("/wallet/balance"), { signal }),
+    );
+    return this.parseWalletBalance(response.data as Record<string, unknown>);
+  }
+
   private parseEsim(data: Record<string, unknown>): CitrusEsim {
     const iccid = typeof data.iccid === "string" ? data.iccid : "";
     if (iccid === "") {
@@ -187,6 +200,32 @@ export class CitrusClient {
       status,
       walletBalanceUsd: typeof data.wallet_balance_usd === "number" ? data.wallet_balance_usd : null,
       totalDataChargedUsd: typeof data.total_data_charged_usd === "number" ? data.total_data_charged_usd : null,
+    };
+  }
+
+  private parseWalletBalance(data: Record<string, unknown> | undefined): CitrusResellerBalance {
+    if (!data || typeof data !== "object") {
+      throw new CitrusApiError(0, "MALFORMED_RESPONSE", "la respuesta no trajo balance", { retryable: false });
+    }
+    let balanceUsd: number | undefined;
+    if (typeof data.balance_usd === "number" && Number.isFinite(data.balance_usd)) {
+      balanceUsd = data.balance_usd;
+    } else if (typeof data.balance_usd === "string") {
+      const parsed = Number(data.balance_usd);
+      if (Number.isFinite(parsed)) {
+        balanceUsd = parsed;
+      }
+    }
+    if (balanceUsd === undefined) {
+      throw new CitrusApiError(0, "MALFORMED_RESPONSE", "la respuesta no trajo balance_usd válido", { retryable: false });
+    }
+    const currency =
+      typeof data.currency === "string" && data.currency.trim().length > 0
+        ? data.currency.trim()
+        : "USD";
+    return {
+      balanceUsd,
+      currency,
     };
   }
 

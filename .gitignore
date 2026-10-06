@@ -25,3 +25,15 @@ contracts/cache/
 
 # kero-audit screenshots and reports
 .kero-audit/
+
+# Colosseum feedback report
+docs/feedback-colosseum-superteam.md
+
+# OpenSpec
+openspec/
+.openspec/
+.openspec*
+.agents/
+.github/prompts/
+.github/skills/
+

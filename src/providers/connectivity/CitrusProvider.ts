@@ -144,6 +144,14 @@ export class CitrusProvider implements ConnectivityProvider {
     }));
   }
 
+  async getResellerBalance(): Promise<{ balanceUsd: number; balanceMicroUsd: bigint }> {
+    const res = await this.client.getWalletBalance();
+    return {
+      balanceUsd: res.balanceUsd,
+      balanceMicroUsd: usdToMicroUsd(res.balanceUsd),
+    };
+  }
+
   private recordFor(row: EsimRecordRow): EsimRecord {
     return {
       iccid: row.iccid,

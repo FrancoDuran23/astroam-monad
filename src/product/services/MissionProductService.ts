@@ -7,6 +7,7 @@ import { createConnectivitySession, type ConnectivitySession } from '../../model
 import { runReconciliation } from '../../jobs/reconciliation.ts'
 import { parseNonNegativeIntegerRaw, pricePerMibFromPerMbRaw } from '../../shared/money.ts'
 import type { PaymentRail } from '../../rails/PaymentRail.ts'
+import { assertSufficientResellerBalance } from '../../services/reseller-balance-guard.ts'
 
 /** USDC (number) to raw units (1e-7 USDC). */
 function usdcToRaw(usdc: number): bigint {
@@ -156,6 +157,8 @@ export class MissionProductService {
       throw unavailable('payments are simulated; configure a live payment rail for live mode')
     }
 
+    await assertSufficientResellerBalance(this.connectivity)
+
     const intent = await this.rail.createDepositIntent({
       missionId: mission.id,
       amountUsdc: mission.budgetUsdc,
@@ -233,6 +236,8 @@ export class MissionProductService {
     if (mission.status === 'active' && mission.iccid && mission.esim) {
       return { missionId: mission.id, status: mission.status, isMock: !this.hasCitrusReal, esim: mission.esim }
     }
+
+    await assertSufficientResellerBalance(this.connectivity)
 
     const esimRecord = await this.connectivity.provisionEsim(mission.userId)
     const publicEsim: PublicEsimInfo = {

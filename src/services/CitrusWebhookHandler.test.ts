@@ -219,3 +219,200 @@ test("handle esim.defunded for an unknown/missing iccid warns but never throws",
   assert.equal(missing.handled, "processed");
   assert.equal(store.list().length, 0);
 });
+
+test("handle balance.auto_refill_failed: logs error with reason citrus_auto_refill_failed and records failure state", async () => {
+  const { handler, stamped } = makeHarness();
+  assert.equal(handler.hasAutoRefillFailed(), false);
+  assert.equal(handler.lastAutoRefillFailedAt, undefined);
+
+  const payload = {
+    id: "evt-refill-fail-1",
+    event: "balance.auto_refill_failed",
+    created_at: "2026-09-24T10:00:00.000Z",
+    data: { reason: "card_declined" },
+  };
+
+  const result = accept(await handler.handle(payload));
+  assert.equal(result.handled, "processed");
+  assert.equal(result.event, "balance.auto_refill_failed");
+
+  assert.equal(handler.hasAutoRefillFailed(), true);
+  assert.equal(handler.lastAutoRefillFailedAt, "2026-09-24T10:00:00.000Z");
+
+  const logEntry = stamped.find((l) => l.reason === "citrus_auto_refill_failed");
+  assert.ok(logEntry);
+  assert.equal(logEntry.level, "error");
+  assert.equal(logEntry.id, "evt-refill-fail-1");
+  assert.equal(logEntry.event, "balance.auto_refill_failed");
+  assert.deepEqual(logEntry.payload, payload);
+});
+
+test("handle balance.low: logs warn with reason citrus_balance_low", async () => {
+  const { handler, stamped } = makeHarness();
+  const payload = {
+    id: "evt-bal-low-1",
+    event: "balance.low",
+    created_at: "2026-09-24T10:05:00.000Z",
+    data: { balance_usd: 4.5 },
+  };
+
+  const result = accept(await handler.handle(payload));
+  assert.equal(result.handled, "processed");
+
+  const logEntry = stamped.find((l) => l.reason === "citrus_balance_low");
+  assert.ok(logEntry);
+  assert.equal(logEntry.level, "warn");
+  assert.equal(logEntry.id, "evt-bal-low-1");
+  assert.equal(logEntry.event, "balance.low");
+  assert.deepEqual(logEntry.payload, payload);
+});
+
+test("handle balance.depleted: logs error with reason citrus_balance_depleted", async () => {
+  const { handler, stamped } = makeHarness();
+  const payload = {
+    id: "evt-bal-depleted-1",
+    event: "balance.depleted",
+    created_at: "2026-09-24T10:10:00.000Z",
+    data: { balance_usd: 0 },
+  };
+
+  const result = accept(await handler.handle(payload));
+  assert.equal(result.handled, "processed");
+
+  const logEntry = stamped.find((l) => l.reason === "citrus_balance_depleted");
+  assert.ok(logEntry);
+  assert.equal(logEntry.level, "error");
+  assert.equal(logEntry.id, "evt-bal-depleted-1");
+  assert.equal(logEntry.event, "balance.depleted");
+  assert.deepEqual(logEntry.payload, payload);
+});
+
+test("handle balance.auto_refill_succeeded: logs info and resets failure state", async () => {
+  const { handler, stamped } = makeHarness();
+  await handler.handle({
+    id: "evt-refill-fail-2",
+    event: "balance.auto_refill_failed",
+    created_at: "2026-09-24T10:00:00.000Z",
+  });
+  assert.equal(handler.hasAutoRefillFailed(), true);
+  assert.notEqual(handler.lastAutoRefillFailedAt, undefined);
+
+  const payload = {
+    id: "evt-refill-ok-1",
+    event: "balance.auto_refill_succeeded",
+    created_at: "2026-09-24T10:15:00.000Z",
+    data: { amount_usd: 50 },
+  };
+  const result = accept(await handler.handle(payload));
+  assert.equal(result.handled, "processed");
+  assert.equal(handler.hasAutoRefillFailed(), false);
+  assert.equal(handler.lastAutoRefillFailedAt, undefined);
+
+  const logEntry = stamped.find((l) => l.reason === "citrus_balance_refilled" && l.id === "evt-refill-ok-1");
+  assert.ok(logEntry);
+  assert.equal(logEntry.level, "info");
+  assert.equal(logEntry.id, "evt-refill-ok-1");
+  assert.equal(logEntry.event, "balance.auto_refill_succeeded");
+  assert.deepEqual(logEntry.payload, payload);
+});
+
+test("handle balance.topped_up: logs info and resets failure state", async () => {
+  const { handler, stamped } = makeHarness();
+  await handler.handle({
+    id: "evt-refill-fail-3",
+    event: "balance.auto_refill_failed",
+    created_at: "2026-09-24T10:00:00.000Z",
+  });
+  assert.equal(handler.hasAutoRefillFailed(), true);
+
+  const payload = {
+    id: "evt-topup-1",
+    event: "balance.topped_up",
+    created_at: "2026-09-24T10:20:00.000Z",
+    data: { amount_usd: 100 },
+  };
+  const result = accept(await handler.handle(payload));
+  assert.equal(result.handled, "processed");
+  assert.equal(handler.hasAutoRefillFailed(), false);
+  assert.equal(handler.lastAutoRefillFailedAt, undefined);
+
+  const logEntry = stamped.find((l) => l.reason === "citrus_balance_refilled" && l.id === "evt-topup-1");
+  assert.ok(logEntry);
+  assert.equal(logEntry.level, "info");
+  assert.equal(logEntry.id, "evt-topup-1");
+  assert.equal(logEntry.event, "balance.topped_up");
+  assert.deepEqual(logEntry.payload, payload);
+});
+
+test("handle balance events: duplicate balance events are skipped by dedup", async () => {
+  const { handler, stamped } = makeHarness();
+  const payload = {
+    id: "evt-bal-dup-1",
+    event: "balance.low",
+    created_at: "2026-09-24T10:00:00.000Z",
+    data: { balance_usd: 3 },
+  };
+  const first = accept(await handler.handle(payload));
+  assert.equal(first.handled, "processed");
+
+  const second = accept(await handler.handle(payload));
+  assert.equal(second.handled, "duplicate");
+
+  const logs = stamped.filter((l) => l.id === "evt-bal-dup-1");
+  assert.equal(logs.length, 1);
+});
+
+test("handle: invalid HMAC signature returns invalid_signature", async () => {
+  const dir = tempDir("citrus-webhook-sig-");
+  const store = openEsimStore(path.join(dir, "esim.json"));
+  const log = WebhookEventLog.open(path.join(dir, "events.jsonl"));
+  const handler = new CitrusWebhookHandler({
+    log,
+    esimStore: store,
+    secret: SECRET,
+    logger: () => {},
+  });
+
+  const payload = {
+    id: "evt-sig-1",
+    event: "balance.low",
+    created_at: "2026-09-24T10:00:00.000Z",
+  };
+  const bodyStr = JSON.stringify(payload);
+
+  // Missing signature
+  const resMissing = await handler.handle(payload);
+  assert.deepEqual(resMissing, { accepted: false, reason: "invalid_signature" });
+
+  // Bad signature
+  const resBad = await handler.handle(payload, "invalid_signature_hex", bodyStr);
+  assert.deepEqual(resBad, { accepted: false, reason: "invalid_signature" });
+
+  // Wrong secret signature
+  const badSig = sign(bodyStr, "whsec_other_secret_value_123456789012");
+  const resWrongSecret = await handler.handle(payload, badSig, bodyStr);
+  assert.deepEqual(resWrongSecret, { accepted: false, reason: "invalid_signature" });
+
+  // Valid signature
+  const validSig = sign(bodyStr, SECRET);
+  const resValid = await handler.handle(payload, validSig, bodyStr);
+  assert.equal(resValid.accepted, true);
+  assert.equal(resValid.handled, "processed");
+});
+
+test("replay: restores auto-refill failure state from log at boot", async () => {
+  const dir = tempDir("citrus-webhook-replay-bal-");
+  const store = openEsimStore(path.join(dir, "esim.json"));
+  const log = WebhookEventLog.open(path.join(dir, "events.jsonl"));
+  log.record({
+    id: "evt-replay-fail-1",
+    event: "balance.auto_refill_failed",
+    createdAt: "2026-09-24T10:00:00.000Z",
+    payload: { id: "evt-replay-fail-1", event: "balance.auto_refill_failed", created_at: "2026-09-24T10:00:00.000Z" },
+  });
+  const handler = new CitrusWebhookHandler({ log, esimStore: store, logger: () => {} });
+  assert.equal(handler.hasAutoRefillFailed(), false);
+  await handler.replay();
+  assert.equal(handler.hasAutoRefillFailed(), true);
+  assert.equal(handler.lastAutoRefillFailedAt, "2026-09-24T10:00:00.000Z");
+});

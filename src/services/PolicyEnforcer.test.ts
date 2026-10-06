@@ -127,6 +127,9 @@ function recorder(usage: SimUsage) {
     async resume() {},
     async refundUnused() {},
     async terminate() {},
+    async getResellerBalance() {
+      return { balanceUsd: 100, balanceMicroUsd: 100_000_000n };
+    },
   };
   return { calls, provider };
 }
