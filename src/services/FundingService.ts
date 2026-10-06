@@ -24,6 +24,8 @@ import type { EsimStore } from "../persistence/esim-record.ts";
 import type { ChannelBalancePort } from "./PolicyEnforcer.ts";
 import { maxWalletCents } from "../shared/usage-math.ts";
 import { CitrusApiError } from "../shared/citrus-errors.ts";
+import { nextFundCents, type FundFlowConfig, DEFAULT_FUND_FLOW } from "../product/services/fund-flow.ts";
+import { rawToAtomicFloor } from "../shared/monad/amounts.ts";
 
 export const MICRO_USD_PER_CENT = 10_000n;
 
@@ -34,6 +36,9 @@ export type FundingServiceOptions = {
   balancePort: ChannelBalancePort;
   markupsBps: number;
   usdcUsdRateBps: number;
+  fundFlowConfig?: FundFlowConfig;
+  /** Optional port to read the highest authorized voucher in raw units. */
+  authorizedPort?: { getAuthorizedRaw(channelId: string): Promise<bigint> };
   logger?: (line: unknown) => void;
 };
 
@@ -47,6 +52,8 @@ export class FundingService {
   private readonly balancePort: ChannelBalancePort;
   private readonly markupBps: number;
   private readonly usdcUsdRateBps: number;
+  private readonly fundFlowConfig: FundFlowConfig;
+  private readonly authorizedPort?: { getAuthorizedRaw(channelId: string): Promise<bigint> };
   private readonly logger: (line: unknown) => void;
 
   constructor(options: FundingServiceOptions) {
@@ -55,15 +62,27 @@ export class FundingService {
     this.balancePort = options.balancePort;
     this.markupBps = options.markupsBps;
     this.usdcUsdRateBps = options.usdcUsdRateBps;
+    this.fundFlowConfig = options.fundFlowConfig ?? {
+      ...DEFAULT_FUND_FLOW,
+      markupBps: options.markupsBps,
+      usdcUsdRateBps: options.usdcUsdRateBps,
+    };
+    this.authorizedPort = options.authorizedPort;
     this.logger = options.logger ?? ((line) => console.log(JSON.stringify(line)));
   }
 
   /**
-   * Ensures the wallet holds `maxWalletCents` worth of funding for the
-   * channel's current deposit. Idempotent: a second call after a successful
-   * run has gap ≤ 0 and does nothing. See the module doc for crash recovery.
+   * Ensures the wallet holds funding up to what the vouchers cover plus one
+   * tranche (never exceeding the channel deposit).
+   * Idempotent: a second call after a successful run has gap <= 0 and does nothing.
+   * See the module doc for crash recovery.
    */
-  async ensureFunded(input: { iccid: string; userRef: string; channelId: string }): Promise<EnsureFundedResult> {
+  async ensureFunded(input: {
+    iccid: string;
+    userRef: string;
+    channelId: string;
+    voucherAtomic?: bigint;
+  }): Promise<EnsureFundedResult> {
     const { iccid, userRef, channelId } = input;
     const row = this.esimStore.get(iccid);
     if (row === undefined) {
@@ -75,7 +94,13 @@ export class FundingService {
     if (row.status === "terminated") return { funded: false, reason: "terminated" };
 
     const depositRaw = await this.balancePort.getChannelBalance(channelId);
-    const maxCents = maxWalletCents(depositRaw, this.usdcUsdRateBps, this.markupBps);
+    const depositAtomic = rawToAtomicFloor(depositRaw);
+
+    let voucherAtomic = input.voucherAtomic ?? 0n;
+    if (input.voucherAtomic === undefined && this.authorizedPort) {
+      const authorizedRaw = await this.authorizedPort.getAuthorizedRaw(channelId);
+      voucherAtomic = rawToAtomicFloor(authorizedRaw);
+    }
 
     const usage = await this.provider.getUsage(iccid);
     const walletCents = Number(usage.walletMicroUsd / MICRO_USD_PER_CENT);
@@ -85,7 +110,7 @@ export class FundingService {
     // --- Reconcile a persisted, unconfirmed fund (crash/timeout restart) ---
     if (row.pendingFund !== null) {
       const pending = row.pendingFund;
-      const landed = walletCents >= pending.walletBeforeCents + pending.amountCents - 6; // ≤5¢ rounding, C5
+      const landed = walletCents >= pending.walletBeforeCents + pending.amountCents - 6; // <= 5c rounding, C5
       if (landed) {
         fundedCents += pending.amountCents;
         await this.esimStore.update(iccid, (r) => ({
@@ -114,8 +139,15 @@ export class FundingService {
       }
     }
 
-    // --- Gap to the top ---
-    const gap = maxCents - fundedCents;
+    // --- Tranche funding rule: nextFundCents ---
+    const gap = nextFundCents(
+      {
+        depositAtomic,
+        voucherAtomic,
+        fundedCents,
+      },
+      this.fundFlowConfig,
+    );
     if (gap <= 0) {
       return { funded: false, reason: "already_funded" };
     }

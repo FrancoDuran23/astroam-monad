@@ -5,6 +5,7 @@ import { createPaymentRail } from '../../rails/createPaymentRail.ts'
 import type { PaymentRail } from '../../rails/PaymentRail.ts'
 import { FileMissionRepository } from '../persistence/MissionRepository.ts'
 import { MissionProductService } from '../services/MissionProductService.ts'
+import { fundFlowConfigFromEnv } from '../services/fund-flow.ts'
 
 export function bootProductService(
   env: Record<string, string | undefined> = process.env,
@@ -31,5 +32,11 @@ export function bootProductService(
     }
   }
 
-  return new MissionProductService({ repo, connectivity, rail, hasCitrusReal })
+  return new MissionProductService({
+    repo,
+    connectivity,
+    rail,
+    hasCitrusReal,
+    fundFlow: fundFlowConfigFromEnv(env),
+  })
 }

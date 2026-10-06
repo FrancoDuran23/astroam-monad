@@ -7,6 +7,7 @@ import { CitrusWebhookHandler } from "../services/CitrusWebhookHandler.ts";
 import { webhookEventPath, WebhookEventLog } from "../persistence/webhook-event.ts";
 import { createPaymentRail } from "../rails/createPaymentRail.ts";
 import { bootProductService } from "../product/runtime/product-boot.ts";
+import { startFundFlowLoop } from "../jobs/fund-flow.ts";
 import { createServerApp } from "./app.ts";
 import type { CitrusWebhooksRouteOptions } from "./routes/citrus-webhooks.ts";
 
@@ -51,6 +52,25 @@ if (env.CONNECTIVITY_PROVIDER === "citrus" && env.CITRUS_WEBHOOK_SECRET) {
 }
 
 const app = createServerApp({ productService, ...(citrusWebhooks !== undefined ? { citrusWebhooks } : {}) });
+
+// Automatic fund flow: runs the advance loop for open missions and sweeps collected USDC
+if (env.FUND_FLOW_ENABLED !== "false") {
+  const treasuryMinUsdc = Number(env.TREASURY_SWEEP_MIN_USDC);
+  const treasuryAddress = env.TREASURY_ADDRESS || env.BRIDGE_LIQUIDATION_ADDRESS;
+  const treasury = treasuryAddress
+    ? {
+        address: treasuryAddress,
+        minAtomic: Number.isFinite(treasuryMinUsdc) && treasuryMinUsdc > 0 ? BigInt(Math.round(treasuryMinUsdc * 1e6)) : 10_000_000n,
+      }
+    : undefined;
+  startFundFlowLoop({
+    service: productService,
+    rail,
+    treasury,
+    logger: log,
+  });
+  log({ level: "info", msg: "fund-flow loop started", treasury: treasuryAddress ?? "none" });
+}
 
 app.listen(port, () => {
   log({ level: "info", msg: `astroam server listening on :${port}`, network });

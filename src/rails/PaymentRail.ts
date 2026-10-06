@@ -65,6 +65,9 @@ export type DepositConfirmation =
       channelId: string;
       /** Total deposited into the channel after this deposit. */
       depositRaw: bigint;
+      travelerAddress?: string;
+      sessionKey?: string;
+      escrowActiveAt?: string;
     }
   | { valid: false; reason: string };
 
@@ -132,11 +135,35 @@ export interface PaymentRail {
   getAuthorizedRaw?(channelId: string): Promise<bigint>;
 
   /**
+   * Partially claims funds from an open escrow using a cumulative voucher.
+   */
+  claim?(params: {
+    channelId: string;
+    voucherAmountAtomic: bigint;
+    signature: string;
+  }): Promise<{ txHash: string; claimedAtomic: bigint }>;
+
+  /**
+   * Reads the on-chain escrow state if available.
+   */
+  readEscrowState?(channelId: string): Promise<{
+    depositAtomic: bigint;
+    claimedAtomic: bigint;
+    settled: boolean;
+    activeAt?: number;
+  } | null>;
+
+  /**
    * Settles the channel once. `settleRaw` is what was actually used; the rail
    * pays at most that (and never more than the highest voucher) and refunds
    * the rest. Without it, the highest voucher is settled.
    */
   closeChannel(channelId: string, settleRaw?: bigint): Promise<CloseOutcome>;
+
+  /**
+   * Moves accumulated USDC from the payee account to a treasury address.
+   */
+  sweep?(input: { to: string; minAtomic: bigint }): Promise<{ txHash: string; amountAtomic: bigint } | null>;
 
   /** Block-explorer link for a transaction, when there is a real chain. */
   explorerTxUrl(txHash: string): string | undefined;

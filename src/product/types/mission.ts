@@ -35,6 +35,21 @@ export type PublicEsimInfo = {
   isMock?: boolean
 }
 
+export type StoredVoucher = {
+  cumulativeAtomic: string
+  signature: string
+  signedAt: string
+}
+
+export type ClaimRecord = {
+  amountAtomic?: string
+  cumulativeAtomic: string
+  txHash: string
+  claimedAt?: string
+  at?: string
+  explorerUrl?: string
+}
+
 export type ProductMission = {
   id: string
   userId: string
@@ -51,6 +66,32 @@ export type ProductMission = {
   paymentIntentId?: string
   depositTxHash?: string
   depositExplorerUrl?: string
+  /** sha256("astroam-escrow:" + mission id) / channel identifier */
+  escrowId?: string
+  /** Deposit in 6-decimal USDC atomic units. */
+  depositAtomic?: string
+  /** Traveler wallet that signed the deposit. */
+  travelerAddress?: string
+  /** Session key the deposit registered in the escrow. It signs EIP-712 vouchers. */
+  sessionKey?: string
+  /** true once the backend verified this deposit on-chain. */
+  depositVerified?: boolean
+  /** Deposit, last top-up or last claim, ISO. The escrow's refund timeout runs from here. */
+  escrowActiveAt?: string
+  voucher?: StoredVoucher
+  /** Collected so far by `claim`, in 6-decimal USDC atomic units. */
+  claimedAtomic?: string
+  claims?: ClaimRecord[]
+  /** USD cents funded into the eSIM wallet this trip. Never more than one tranche ahead of the voucher. */
+  fundedCents?: number
+  /** A fund sent to the provider and not confirmed yet. */
+  pendingFund?: { amountCents: number; requestedAt: string }
+  /** Provider's lifetime charged figure when the trip started, micro-USD. */
+  chargedBaselineMicroUsd?: string
+  /** Last time metered usage grew, ISO. */
+  lastUsageAt?: string
+  /** Why the backend closed the trip by itself. */
+  autoCloseReason?: 'deposit_spent' | 'trip_ended' | 'timeout_near' | 'idle'
   /** Payment channel opened by the deposit (format depends on the rail). */
   channelId?: string
   iccid?: string
@@ -64,6 +105,7 @@ export type ProductMission = {
   topups: TopUpRecord[]
   closeTxHash?: string
   closeExplorerUrl?: string
+  settlement?: 'close' | 'timeout_refund'
   /** Settled to AstroAm when the channel closed, in USDC. */
   settledUsdc?: number
   /** Returned to the traveler when the channel closed, in USDC. */
