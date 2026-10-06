@@ -7,10 +7,17 @@ pragma solidity 0.8.24;
 /// The traveler deposits Circle USDC (6 decimals) once and registers a session
 /// key. While the traveler browses, the app signs EIP-712 vouchers with that
 /// key for the running total it authorizes — off-chain, no gas per megabyte.
-/// AstroAm closes the channel once: it is paid what was actually used, capped
-/// by the highest voucher, and the rest goes back to the traveler in the same
-/// transaction. If AstroAm never closes, `refund` returns the whole deposit
-/// after `timeoutSeconds`.
+/// While the channel is open AstroAm may `claim` the part of a voucher it has
+/// not been paid yet, so it never carries more than the latest voucher unpaid.
+/// It closes the channel once: it is paid what was actually used (never less
+/// than what it already claimed, never more than the highest voucher) and the
+/// rest goes back to the traveler in the same transaction. If AstroAm never
+/// closes, `refund` returns everything not yet claimed `timeoutSeconds` after
+/// the last deposit, top-up or claim.
+///
+/// Each claim restarts the timeout, but only with a voucher above what was
+/// already claimed: the payee can never take more than the traveler signed,
+/// though it can delay the refund of the rest by cashing vouchers one by one.
 contract AstroAmEscrow {
     error ZeroAddress();
     error ZeroAmount();
@@ -22,6 +29,8 @@ contract AstroAmEscrow {
     error NotPayee();
     error AmountExceedsDeposit();
     error SettleExceedsVoucher();
+    error SettleBelowClaimed();
+    error NothingToClaim();
     error BadVoucher();
     error TimeoutNotReached();
     error TransferFailed();
@@ -33,6 +42,11 @@ contract AstroAmEscrow {
         /// Session key that signs vouchers for this escrow (set by the traveler).
         address signer;
         uint256 deposit;
+        // Appended so the `escrows` getter keeps the first five fields in place.
+        /// Running total already paid to the payee through `claim`.
+        uint256 claimed;
+        /// Last deposit, top-up or claim: the refund timeout counts from here.
+        uint64 lastActivityAt;
     }
 
     uint8 public constant usdcDecimals = 6;
@@ -50,6 +64,9 @@ contract AstroAmEscrow {
 
     event Deposited(bytes32 indexed escrowId, address indexed traveler, address signer, uint256 amount);
     event ToppedUp(bytes32 indexed escrowId, uint256 added, uint256 deposit);
+    event Claimed(bytes32 indexed escrowId, uint256 amount, uint256 totalClaimed);
+    /// `paid` is the total the payee received for this escrow, earlier claims
+    /// included, so `paid + refunded` is always the deposit.
     event Closed(bytes32 indexed escrowId, address indexed traveler, uint256 paid, uint256 refunded);
     event Refunded(bytes32 indexed escrowId, address indexed traveler, uint256 amount);
 
@@ -83,6 +100,7 @@ contract AstroAmEscrow {
         escrow.traveler = msg.sender;
         escrow.signer = signer;
         escrow.openedAt = uint64(block.timestamp);
+        escrow.lastActivityAt = uint64(block.timestamp);
         escrow.deposit = amount;
         _pull(msg.sender, amount);
 
@@ -98,14 +116,36 @@ contract AstroAmEscrow {
         if (msg.sender != escrow.traveler) revert NotTraveler();
 
         escrow.deposit += amount;
+        escrow.lastActivityAt = uint64(block.timestamp);
         _pull(msg.sender, amount);
         emit ToppedUp(escrowId, amount, escrow.deposit);
     }
 
-    /// @notice Settle the channel once. AstroAm is paid `settleAmount` (what was
-    /// used), which may not exceed `voucherAmount`, the running total the
-    /// traveler's session key (or the traveler) signed. The rest is refunded.
-    /// With `settleAmount == 0` no voucher is needed: everything is refunded.
+    /// @notice Collect the part of `voucherAmount` not claimed yet and keep the
+    /// channel open. Only the payee, only with a voucher above what was already
+    /// claimed. Restarts the refund timeout.
+    function claim(bytes32 escrowId, uint256 voucherAmount, bytes calldata signature) external {
+        if (msg.sender != payee) revert NotPayee();
+        Escrow storage escrow = escrows[escrowId];
+        if (escrow.traveler == address(0)) revert EscrowMissing();
+        if (escrow.settled) revert AlreadySettled();
+        _checkVoucher(escrow, escrowId, voucherAmount, signature);
+        if (voucherAmount <= escrow.claimed) revert NothingToClaim();
+
+        uint256 amount = voucherAmount - escrow.claimed;
+        escrow.claimed = voucherAmount;
+        escrow.lastActivityAt = uint64(block.timestamp);
+        _push(payee, amount);
+
+        emit Claimed(escrowId, amount, voucherAmount);
+    }
+
+    /// @notice Settle the channel once. AstroAm is paid `settleAmount` in total
+    /// (what was used, earlier claims included): never less than what it
+    /// already claimed and never more than `voucherAmount`, the running total
+    /// the traveler's session key (or the traveler) signed. The rest is
+    /// refunded. With `settleAmount` equal to what was already claimed no new
+    /// voucher is needed: everything else is refunded.
     function close(bytes32 escrowId, uint256 voucherAmount, bytes calldata signature, uint256 settleAmount) external {
         if (msg.sender != payee) revert NotPayee();
         Escrow storage escrow = escrows[escrowId];
@@ -114,37 +154,49 @@ contract AstroAmEscrow {
         if (escrow.settled) revert AlreadySettled();
         if (voucherAmount > escrow.deposit) revert AmountExceedsDeposit();
         if (settleAmount > voucherAmount) revert SettleExceedsVoucher();
-        if (settleAmount > 0) {
-            address recovered = _recover(escrowId, voucherAmount, signature);
-            if (recovered == address(0) || (recovered != escrow.signer && recovered != traveler)) revert BadVoucher();
-        }
+        uint256 claimed = escrow.claimed;
+        if (settleAmount < claimed) revert SettleBelowClaimed();
+        if (settleAmount > claimed) _checkVoucher(escrow, escrowId, voucherAmount, signature);
 
+        uint256 payAmount = settleAmount - claimed;
         uint256 refundAmount = escrow.deposit - settleAmount;
         escrow.settled = true;
 
-        if (settleAmount > 0) _push(payee, settleAmount);
+        if (payAmount > 0) _push(payee, payAmount);
         if (refundAmount > 0) _push(traveler, refundAmount);
 
         emit Closed(escrowId, traveler, settleAmount, refundAmount);
     }
 
-    /// @notice The whole deposit back to the traveler if AstroAm never closed.
+    /// @notice Everything not claimed back to the traveler if AstroAm never
+    /// closed, `timeoutSeconds` after the last deposit, top-up or claim.
     function refund(bytes32 escrowId) external {
         Escrow storage escrow = escrows[escrowId];
         address traveler = escrow.traveler;
         if (traveler == address(0)) revert EscrowMissing();
         if (escrow.settled) revert AlreadySettled();
-        if (block.timestamp < uint256(escrow.openedAt) + timeoutSeconds) revert TimeoutNotReached();
+        if (block.timestamp < uint256(escrow.lastActivityAt) + timeoutSeconds) revert TimeoutNotReached();
 
-        uint256 amount = escrow.deposit;
+        uint256 amount = escrow.deposit - escrow.claimed;
         escrow.settled = true;
-        _push(traveler, amount);
+        if (amount > 0) _push(traveler, amount);
         emit Refunded(escrowId, traveler, amount);
     }
 
     function voucherHash(bytes32 escrowId, uint256 cumulativeAmount) public view returns (bytes32) {
         bytes32 structHash = keccak256(abi.encode(VOUCHER_TYPEHASH, escrowId, cumulativeAmount));
         return keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+    }
+
+    /// Reverts unless the session key or the traveler signed `voucherAmount`
+    /// and the deposit covers it.
+    function _checkVoucher(Escrow storage escrow, bytes32 escrowId, uint256 voucherAmount, bytes calldata signature)
+        internal
+        view
+    {
+        if (voucherAmount > escrow.deposit) revert AmountExceedsDeposit();
+        address recovered = _recover(escrowId, voucherAmount, signature);
+        if (recovered == address(0) || (recovered != escrow.signer && recovered != escrow.traveler)) revert BadVoucher();
     }
 
     function _recover(bytes32 escrowId, uint256 cumulativeAmount, bytes calldata signature)

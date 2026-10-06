@@ -59,7 +59,7 @@ export type MonadRailOptions = {
   receiptTimeoutMs?: number;
 };
 
-type OnChainEscrow = { traveler: Address; signer: Address; deposit: bigint; settled: boolean };
+type OnChainEscrow = { traveler: Address; signer: Address; deposit: bigint; claimed: bigint; settled: boolean };
 type StoredVoucher = { atomic: string; signature: Hex; signedAt: string };
 type Intent = { missionId: string; purpose: DepositPurpose; escrowId: Hex; amountAtomic: bigint };
 
@@ -123,13 +123,13 @@ export class MonadRail implements PaymentRail {
   }
 
   private async readEscrow(escrowId: Hex): Promise<OnChainEscrow> {
-    const [traveler, , settled, signer, deposit] = (await this.client.readContract({
+    const [traveler, , settled, signer, deposit, claimed] = (await this.client.readContract({
       address: this.opts.escrow,
       abi: astroAmEscrowAbi,
       functionName: "escrows",
       args: [escrowId],
-    })) as readonly [Address, bigint, boolean, Address, bigint];
-    return { traveler, signer, settled, deposit };
+    })) as readonly [Address, bigint, boolean, Address, bigint, bigint, bigint];
+    return { traveler, signer, settled, deposit, claimed };
   }
 
   async createDepositIntent(input: {

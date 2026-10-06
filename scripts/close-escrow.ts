@@ -1,6 +1,7 @@
-// Close one AstroAmEscrow with no usage: the payee calls close(id, 0, "0x", 0)
-// and the whole deposit goes back to the traveler in the same transaction.
-// Used to recover a deposit whose mission never activated.
+// Close one AstroAmEscrow with no usage beyond what was already claimed: the
+// payee calls close(id, claimed, "0x", claimed) and the rest of the deposit goes
+// back to the traveler in the same transaction (the whole deposit if nothing was
+// claimed). Used to recover a deposit whose mission never activated.
 //
 //   npm run monad:close-escrow -- 0x<escrowId>           # reads state only
 //   npm run monad:close-escrow -- 0x<escrowId> --send    # sends the tx
@@ -51,17 +52,31 @@ const chain = defineChain({
 const account = privateKeyToAccount(key as Hex);
 const publicClient = createPublicClient({ chain, transport: http(MONAD_RPC_URL) });
 
-const [traveler, , settled, , deposit] = (await publicClient.readContract({
-  address: contract,
-  abi: astroAmEscrowAbi,
-  functionName: "escrows",
-  args: [escrowId],
-})) as readonly [Hex, bigint, boolean, Hex, bigint];
+// The v1 contract (no claim) returns five fields, which the current ABI cannot
+// decode: fall back to its getter so old escrows can still be closed.
+const v1EscrowsAbi = [{
+  type: "function",
+  name: "escrows",
+  stateMutability: "view",
+  inputs: [{ name: "escrowId", type: "bytes32" }],
+  outputs: [
+    { name: "traveler", type: "address" },
+    { name: "openedAt", type: "uint64" },
+    { name: "settled", type: "bool" },
+    { name: "signer", type: "address" },
+    { name: "deposit", type: "uint256" },
+  ],
+}] as const;
+type EscrowFields = readonly [Hex, bigint, boolean, Hex, bigint, bigint?, bigint?];
+const readEscrow = (abi: typeof astroAmEscrowAbi | typeof v1EscrowsAbi) =>
+  publicClient.readContract({ address: contract, abi, functionName: "escrows", args: [escrowId] }) as Promise<EscrowFields>;
+const [traveler, , settled, , deposit, claimed = 0n] = await readEscrow(astroAmEscrowAbi).catch(() => readEscrow(v1EscrowsAbi));
 
 const usdc = (raw: bigint) => `${formatUnits(raw, MONAD_USDC_DECIMALS)} USDC`;
 console.log(`Escrow:   ${escrowId}`);
 console.log(`Traveler: ${traveler}`);
 console.log(`Deposit:  ${usdc(deposit)}`);
+console.log(`Claimed:  ${usdc(claimed)}`);
 console.log(`Settled:  ${settled}`);
 
 if (/^0x0{40}$/.test(traveler)) {
@@ -73,7 +88,7 @@ if (settled) {
   process.exit(1);
 }
 if (!send) {
-  console.log(`\nDry run. With --send, ${account.address} closes it and ${usdc(deposit)} returns to ${traveler}.`);
+  console.log(`\nDry run. With --send, ${account.address} closes it and ${usdc(deposit - claimed)} returns to ${traveler}.`);
   process.exit(0);
 }
 
@@ -82,7 +97,7 @@ const hash = await wallet.writeContract({
   address: contract,
   abi: astroAmEscrowAbi,
   functionName: "close",
-  args: [escrowId, 0n, "0x", 0n],
+  args: [escrowId, claimed, "0x", claimed],
 });
 console.log(`Close tx: ${MONAD_EXPLORER}/tx/${hash}`);
 const receipt = await publicClient.waitForTransactionReceipt({ hash });
@@ -90,4 +105,4 @@ if (receipt.status !== "success") {
   console.error("close reverted.");
   process.exit(1);
 }
-console.log(`Done: ${usdc(deposit)} refunded to ${traveler}.`);
+console.log(`Done: ${usdc(deposit - claimed)} refunded to ${traveler}.`);
