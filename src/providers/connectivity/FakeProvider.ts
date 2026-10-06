@@ -29,6 +29,7 @@ let nextSerial = 1;
 export class FakeProvider implements ConnectivityProvider {
   private readonly byIccid = new Map<string, FakeEsimState>();
   private readonly byUserRef = new Map<string, string>();
+  private resellerBalanceUsd = 100;
   private now: () => Date;
 
   constructor(now: () => Date = () => new Date()) {
@@ -156,6 +157,21 @@ export class FakeProvider implements ConnectivityProvider {
   setChargedUsd(iccid: string, chargedMicroUsd: bigint): void {
     const state = this.sim(iccid);
     state.chargedMicroUsd = chargedMicroUsd;
+  }
+
+  /** Test seam: sets the fake reseller balance in USD. */
+  setResellerBalanceUsd(amount: number): void {
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new RangeError(`FakeProvider: amount debe ser un número no negativo, recibí ${amount}`);
+    }
+    this.resellerBalanceUsd = amount;
+  }
+
+  async getResellerBalance(): Promise<{ balanceUsd: number; balanceMicroUsd: bigint }> {
+    return {
+      balanceUsd: this.resellerBalanceUsd,
+      balanceMicroUsd: BigInt(Math.round(this.resellerBalanceUsd * 1_000_000)),
+    };
   }
 
   async terminate(iccid: string): Promise<void> {

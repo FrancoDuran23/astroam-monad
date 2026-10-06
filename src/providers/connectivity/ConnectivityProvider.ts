@@ -57,4 +57,6 @@ export interface ConnectivityProvider {
   refundUnused(iccid: string): Promise<void>;
   /** Permanently deletes the eSIM (requires an already-empty wallet). */
   terminate(iccid: string): Promise<void>;
+  /** Reads the reseller account wallet balance in USD and micro-USD (C1). */
+  getResellerBalance(): Promise<{ balanceUsd: number; balanceMicroUsd: bigint }>;
 }

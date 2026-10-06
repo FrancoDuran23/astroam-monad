@@ -246,3 +246,90 @@ test("una respuesta malformada sin iccid lanza CitrusApiError no reintentable", 
     return true;
   });
 });
+
+test("getWalletBalance: obtiene saldo reseller y parsea (C1)", async () => {
+  const { client, calls } = makeClient({
+    get: () => ({ balance_usd: 125.5, currency: "USD" }),
+  });
+  const balance = await client.getWalletBalance();
+  assert.equal(calls.get[0]!.url, `${API_BASE}/wallet/balance`);
+  assert.equal(balance.balanceUsd, 125.5);
+  assert.equal(balance.currency, "USD");
+});
+
+test("getWalletBalance: aplica default USD cuando currency no viene y maneja strings numéricos y saldo 0", async () => {
+  const { client: clientDefault } = makeClient({
+    get: () => ({ balance_usd: 50 }),
+  });
+  const balanceDefault = await clientDefault.getWalletBalance();
+  assert.equal(balanceDefault.balanceUsd, 50);
+  assert.equal(balanceDefault.currency, "USD");
+
+  const { client: clientString } = makeClient({
+    get: () => ({ balance_usd: "42.50", currency: "EUR" }),
+  });
+  const balanceString = await clientString.getWalletBalance();
+  assert.equal(balanceString.balanceUsd, 42.5);
+  assert.equal(balanceString.currency, "EUR");
+
+  const { client: clientZero } = makeClient({
+    get: () => ({ balance_usd: 0 }),
+  });
+  const balanceZero = await clientZero.getWalletBalance();
+  assert.equal(balanceZero.balanceUsd, 0);
+});
+
+test("getWalletBalance: 429 es reintentable y se recupera con Retry-After", async () => {
+  let tries = 0;
+  const { client } = makeClient({
+    get: () => {
+      tries += 1;
+      if (tries < 3) throw apiError(429, "RATE_LIMITED", { "retry-after": "1" });
+      return { balance_usd: 100, currency: "USD" };
+    },
+  });
+  const balance = await client.getWalletBalance();
+  assert.equal(balance.balanceUsd, 100);
+  assert.equal(tries, 3);
+});
+
+test("getWalletBalance: 429 agotado lanza CitrusRateLimitedError", async () => {
+  const { client } = makeClient({
+    get: () => {
+      throw apiError(429, "RATE_LIMITED", { "retry-after": "5" });
+    },
+  });
+  await assert.rejects(client.getWalletBalance(), (error: unknown) => {
+    assert.equal(error instanceof CitrusRateLimitedError, true);
+    assert.equal((error as CitrusRateLimitedError).retryAfterSeconds, 5);
+    return true;
+  });
+});
+
+test("getWalletBalance: 502 y 503 son reintentables", async () => {
+  for (const status of [502, 503]) {
+    let tries = 0;
+    const { client } = makeClient({
+      get: () => {
+        tries += 1;
+        if (tries < 2) throw apiError(status, "BAD_GATEWAY");
+        return { balance_usd: 75.25, currency: "USD" };
+      },
+    });
+    const balance = await client.getWalletBalance();
+    assert.equal(balance.balanceUsd, 75.25);
+    assert.equal(tries, 2);
+  }
+});
+
+test("getWalletBalance: respuesta malformada lanza CitrusApiError no reintentable", async () => {
+  const { client } = makeClient({
+    get: () => ({}),
+  });
+  await assert.rejects(client.getWalletBalance(), (error: unknown) => {
+    assert.equal(error instanceof CitrusApiError, true);
+    assert.equal((error as CitrusApiError).code, "MALFORMED_RESPONSE");
+    assert.equal((error as CitrusApiError).retryable, false);
+    return true;
+  });
+});

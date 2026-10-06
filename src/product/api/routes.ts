@@ -6,6 +6,7 @@ import {
   topupIntentSchema,
   topupConfirmationSchema,
   demoTrafficSchema, authorizationSchema } from '../schemas/mission.ts'
+import { ResellerInsufficientFundsError } from '../../services/reseller-balance-guard.ts'
 
 function getId(req: Request): string {
   const raw = req.params.id
@@ -88,6 +89,16 @@ export function createProductRouter(service: MissionProductService): Router {
       const result = await service.createPaymentIntent(getId(req))
       res.json(result)
     } catch (err) {
+      if (
+        err instanceof ResellerInsufficientFundsError ||
+        (err instanceof Error && err.message.includes('RESELLER_INSUFFICIENT_FUNDS'))
+      ) {
+        res.status(503).json({
+          error: 'RESELLER_INSUFFICIENT_FUNDS',
+          message: 'Servicio temporalmente no disponible: saldo operativo del proveedor insuficiente para iniciar el viaje.',
+        })
+        return
+      }
       const is503 = err instanceof Error && err.message.includes('503:')
       res.status(is503 ? 503 : 400).json({ error: 'payment_intent_error', message: err instanceof Error ? err.message : String(err) })
     }
@@ -111,6 +122,16 @@ export function createProductRouter(service: MissionProductService): Router {
       const result = await service.activateMission(getId(req))
       res.json(result)
     } catch (err) {
+      if (
+        err instanceof ResellerInsufficientFundsError ||
+        (err instanceof Error && err.message.includes('RESELLER_INSUFFICIENT_FUNDS'))
+      ) {
+        res.status(503).json({
+          error: 'RESELLER_INSUFFICIENT_FUNDS',
+          message: 'Servicio temporalmente no disponible: saldo operativo del proveedor insuficiente para iniciar el viaje.',
+        })
+        return
+      }
       const is503 = err instanceof Error && err.message.includes('503:')
       res.status(is503 ? 503 : 400).json({ error: 'activation_failed', message: err instanceof Error ? err.message : String(err) })
     }

@@ -13,6 +13,10 @@
 //   path).
 // - `esim.balance_depleted` → marks the record `cut` (diagnosis); the wallet
 //   already cut data, no provider call needed.
+// - `balance.auto_refill_failed` → logs error and tracks autoRefillFailed state.
+// - `balance.low` → logs warning alert.
+// - `balance.depleted` → logs error alert.
+// - `balance.auto_refill_succeeded` / `balance.topped_up` → logs info and resets autoRefillFailed.
 // - anything else → logged and answered 200 (R10: the rest is deferred).
 
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -48,6 +52,7 @@ export type WebhookHandleResult =
 export type CitrusWebhookHandlerOptions = {
   log: WebhookEventLog;
   esimStore: EsimStore;
+  secret?: string;
   logger?: (line: unknown) => void;
   now?: () => Date;
 };
@@ -55,14 +60,34 @@ export type CitrusWebhookHandlerOptions = {
 export class CitrusWebhookHandler {
   private readonly log: WebhookEventLog;
   private readonly esimStore: EsimStore;
+  private readonly secret?: string;
   private readonly logger: (line: unknown) => void;
   private readonly now: () => Date;
+  private _autoRefillFailed = false;
+  private _lastAutoRefillFailedAt?: string;
 
   constructor(options: CitrusWebhookHandlerOptions) {
     this.log = options.log;
     this.esimStore = options.esimStore;
+    this.secret = options.secret;
     this.logger = options.logger ?? ((line) => console.log(JSON.stringify(line)));
     this.now = options.now ?? (() => new Date());
+  }
+
+  hasAutoRefillFailed(): boolean {
+    return this._autoRefillFailed;
+  }
+
+  get autoRefillFailed(): boolean {
+    return this._autoRefillFailed;
+  }
+
+  get lastAutoRefillFailedAt(): string | undefined {
+    return this._lastAutoRefillFailedAt;
+  }
+
+  getLastAutoRefillFailedAt(): string | undefined {
+    return this._lastAutoRefillFailedAt;
   }
 
   /**
@@ -72,7 +97,37 @@ export class CitrusWebhookHandler {
    * write is a serialized file mutation that the host awaits BEFORE answering,
    * keeping the R10 ordering observable (record then 200).
    */
-  async handle(payload: unknown): Promise<WebhookHandleResult> {
+  async handle(
+    payload: unknown,
+    signatureOrOptions?: string | { signature?: string; rawBody?: Buffer | string; secret?: string },
+    rawBodyArg?: Buffer | string,
+  ): Promise<WebhookHandleResult> {
+    const signatureHeader =
+      typeof signatureOrOptions === "string"
+        ? signatureOrOptions
+        : signatureOrOptions?.signature;
+    const rawBody =
+      typeof signatureOrOptions === "object" && signatureOrOptions !== null
+        ? signatureOrOptions.rawBody
+        : rawBodyArg;
+    const effectiveSecret =
+      (typeof signatureOrOptions === "object" && signatureOrOptions !== null
+        ? signatureOrOptions.secret
+        : undefined) ?? this.secret;
+
+    if (effectiveSecret !== undefined || signatureHeader !== undefined) {
+      const secretToUse = effectiveSecret ?? "";
+      const bodyBuffer =
+        rawBody !== undefined
+          ? Buffer.isBuffer(rawBody)
+            ? rawBody
+            : Buffer.from(rawBody)
+          : Buffer.from(typeof payload === "string" ? payload : JSON.stringify(payload));
+      if (!verifyCitrusSignature(bodyBuffer, signatureHeader, secretToUse)) {
+        return { accepted: false, reason: "invalid_signature" };
+      }
+    }
+
     const parsed = parseWebhookPayload(payload);
     if (parsed === null) {
       this.logger({ level: "warn", reason: "webhook_malformed", payload: safeStringify(payload) });
@@ -108,6 +163,19 @@ export class CitrusWebhookHandler {
           break;
         case "esim.balance_depleted":
           await this.onBalanceDepleted(record);
+          break;
+        case "balance.auto_refill_failed":
+          this.onAutoRefillFailed(record);
+          break;
+        case "balance.low":
+          this.onBalanceLow(record);
+          break;
+        case "balance.depleted":
+          this.onAccountBalanceDepleted(record);
+          break;
+        case "balance.auto_refill_succeeded":
+        case "balance.topped_up":
+          this.onBalanceRefilled(record);
           break;
         default:
           this.logger({
@@ -191,6 +259,50 @@ export class CitrusWebhookHandler {
       updatedAt: now,
     }));
     this.logger({ level: "warn", reason: "esim_balance_depleted", iccid, id: record.id });
+  }
+
+  private onAutoRefillFailed(record: WebhookEventRecord): void {
+    this._autoRefillFailed = true;
+    this._lastAutoRefillFailedAt = record.createdAt || this.now().toISOString();
+    this.logger({
+      level: "error",
+      reason: "citrus_auto_refill_failed",
+      id: record.id,
+      event: record.event,
+      payload: record.payload,
+    });
+  }
+
+  private onBalanceLow(record: WebhookEventRecord): void {
+    this.logger({
+      level: "warn",
+      reason: "citrus_balance_low",
+      id: record.id,
+      event: record.event,
+      payload: record.payload,
+    });
+  }
+
+  private onAccountBalanceDepleted(record: WebhookEventRecord): void {
+    this.logger({
+      level: "error",
+      reason: "citrus_balance_depleted",
+      id: record.id,
+      event: record.event,
+      payload: record.payload,
+    });
+  }
+
+  private onBalanceRefilled(record: WebhookEventRecord): void {
+    this._autoRefillFailed = false;
+    this._lastAutoRefillFailedAt = undefined;
+    this.logger({
+      level: "info",
+      reason: "citrus_balance_refilled",
+      id: record.id,
+      event: record.event,
+      payload: record.payload,
+    });
   }
 }
 

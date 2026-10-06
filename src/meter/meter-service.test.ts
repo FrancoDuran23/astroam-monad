@@ -47,6 +47,9 @@ test("IntegratedMeterService: procesa tráfico dentro del saldo y mantiene la co
     async getUsage() {
       return ACTIVE_USAGE;
     },
+    async getResellerBalance() {
+      return { balanceUsd: 100, balanceMicroUsd: 100_000_000n };
+    },
   };
 
   const session: ConnectivitySession = createConnectivitySession({
@@ -95,6 +98,9 @@ test("IntegratedMeterService: suspende la eSIM si el consumo agota el saldo del 
     async terminate() {},
     async getUsage() {
       return ACTIVE_USAGE;
+    },
+    async getResellerBalance() {
+      return { balanceUsd: 100, balanceMicroUsd: 100_000_000n };
     },
   };
 
@@ -146,6 +152,9 @@ function recordingProvider(): ConnectivityProvider & { calls: ProviderCalls } {
     async terminate() {},
     async getUsage() {
       return ACTIVE_USAGE;
+    },
+    async getResellerBalance() {
+      return { balanceUsd: 100, balanceMicroUsd: 100_000_000n };
     },
   };
 }
@@ -415,6 +424,9 @@ test("IntegratedMeterService: rechaza precios desalineados entre la política (M
     async terminate() {},
     async getUsage() {
       return ACTIVE_USAGE;
+    },
+    async getResellerBalance() {
+      return { balanceUsd: 100, balanceMicroUsd: 100_000_000n };
     },
   };
 

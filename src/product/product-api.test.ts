@@ -278,3 +278,98 @@ test('Live mode requires the access token on mutable routes', async () => {
   delete process.env.ASTROAM_DEMO_ACCESS_TOKEN
   delete process.env.FRONTEND_ORIGIN
 })
+
+test('POST /missions/:id/payment-intent rejects with 503 RESELLER_INSUFFICIENT_FUNDS when reseller balance is low', async () => {
+  // 1. Create a mission
+  const createRes = await fetch(`${baseUrl}/api/missions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      destination: { id: 'cl', name: 'Chile', flag: '🇨🇱', network: 'ENTEL', coverage: '4G', pricePerMbUsdc: 0.005 },
+      startDate: '2026-10-10',
+      endDate: '2026-10-15',
+      budgetUsdc: 15,
+      dailyLimitUsdc: 5,
+    }),
+  })
+  assert.equal(createRes.status, 201)
+  const missionId = ((await createRes.json()) as { id: string }).id
+
+  try {
+    // 2. Set fake provider balance low (< $4.25 required)
+    fakeProvider.setResellerBalanceUsd(1.0)
+
+    const intentLowRes = await fetch(`${baseUrl}/api/missions/${missionId}/payment-intent`, { method: 'POST' })
+    assert.equal(intentLowRes.status, 503)
+    const errorBody = (await intentLowRes.json()) as { error: string; message: string }
+    assert.equal(errorBody.error, 'RESELLER_INSUFFICIENT_FUNDS')
+    assert.equal(
+      errorBody.message,
+      'Servicio temporalmente no disponible: saldo operativo del proveedor insuficiente para iniciar el viaje.',
+    )
+
+    // 3. Restore reseller balance (>= $4.25)
+    fakeProvider.setResellerBalanceUsd(100.0)
+
+    const intentOkRes = await fetch(`${baseUrl}/api/missions/${missionId}/payment-intent`, { method: 'POST' })
+    assert.equal(intentOkRes.status, 200)
+    const okBody = (await intentOkRes.json()) as { intentId: string; status: string }
+    assert.ok(okBody.intentId)
+    assert.equal(okBody.status, 'pending')
+  } finally {
+    fakeProvider.setResellerBalanceUsd(100.0)
+  }
+})
+
+test('POST /missions/:id/activate rejects with 503 RESELLER_INSUFFICIENT_FUNDS when reseller balance is low', async () => {
+  // 1. Create mission and payment intent
+  const createRes = await fetch(`${baseUrl}/api/missions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      destination: { id: 'uy', name: 'Uruguay', flag: '🇺🇾', network: 'ANTEL', coverage: '4G', pricePerMbUsdc: 0.005 },
+      startDate: '2026-10-10',
+      endDate: '2026-10-15',
+      budgetUsdc: 10,
+      dailyLimitUsdc: 5,
+    }),
+  })
+  const missionId = ((await createRes.json()) as { id: string }).id
+
+  fakeProvider.setResellerBalanceUsd(100.0)
+  const intentRes = await fetch(`${baseUrl}/api/missions/${missionId}/payment-intent`, { method: 'POST' })
+  const intentId = ((await intentRes.json()) as { intentId: string }).intentId
+
+  const confirmRes = await fetch(`${baseUrl}/api/missions/${missionId}/payment-confirmation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ intentId, txHash: '0xtest_tx_activation' }),
+  })
+  assert.equal(confirmRes.status, 200)
+
+  try {
+    // 2. Set fake provider balance low before activation (< $4.25 required)
+    fakeProvider.setResellerBalanceUsd(1.5)
+
+    const actLowRes = await fetch(`${baseUrl}/api/missions/${missionId}/activate`, { method: 'POST' })
+    assert.equal(actLowRes.status, 503)
+    const errorBody = (await actLowRes.json()) as { error: string; message: string }
+    assert.equal(errorBody.error, 'RESELLER_INSUFFICIENT_FUNDS')
+    assert.equal(
+      errorBody.message,
+      'Servicio temporalmente no disponible: saldo operativo del proveedor insuficiente para iniciar el viaje.',
+    )
+
+    // 3. Restore reseller balance and retry activation
+    fakeProvider.setResellerBalanceUsd(50.0)
+
+    const actOkRes = await fetch(`${baseUrl}/api/missions/${missionId}/activate`, { method: 'POST' })
+    assert.equal(actOkRes.status, 200)
+    const okBody = (await actOkRes.json()) as { status: string; esim?: { iccid: string } }
+    assert.equal(okBody.status, 'active')
+    assert.ok(okBody.esim?.iccid)
+  } finally {
+    fakeProvider.setResellerBalanceUsd(100.0)
+  }
+})
+
