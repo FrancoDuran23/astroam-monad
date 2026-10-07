@@ -5,6 +5,7 @@
 import express, { type ErrorRequestHandler, type Express } from "express";
 import { createCitrusWebhooksRoute, type CitrusWebhooksRouteOptions } from "./routes/citrus-webhooks.ts";
 import { createProductRouter } from "../product/api/routes.ts";
+import { corsMiddleware } from "../product/api/cors.ts";
 import { bootProductService } from "../product/runtime/product-boot.ts";
 import type { MissionProductService } from "../product/services/MissionProductService.ts";
 
@@ -42,6 +43,7 @@ export function createServerApp(options: CreateServerAppOptions = {}): Express {
       createCitrusWebhooksRoute(options.citrusWebhooks),
     );
   }
+  app.use(corsMiddleware);
   app.use(express.json());
 
   const productService = options.productService ?? bootProductService(process.env);

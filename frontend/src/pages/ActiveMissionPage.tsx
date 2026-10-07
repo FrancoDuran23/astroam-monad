@@ -7,6 +7,7 @@ import TopUpModal from '../components/dashboard/TopUpModal'
 import { useMission } from '../hooks/useMission'
 import { DEMO_TRAFFIC_MB, estimateMb, fmtDate, fmtMb, fmtUsdc, shortTx } from '../utils/missionUtils'
 import type { FinishResult } from '../types/mission'
+import { hasSessionKey, shouldWarnMissingSessionKey, MISSING_SESSION_KEY_WARNING } from '../chain/monad'
 
 const CARD = 'bg-cardbg glass border border-cardborder'
 
@@ -49,6 +50,15 @@ export default function ActiveMissionPage() {
   const mbLeft = estimateMb(mission.balanceUsdc, mission.destination.pricePerMbUsdc)
   const simulated = isDemoMode || !caps?.paymentsLive
   const networkLabel = simulated ? 'Simulated' : (caps?.paymentRail ?? 'Monad Testnet')
+
+  const sessionKeyMissing = shouldWarnMissingSessionKey({
+    hasKey: hasSessionKey(mission.id),
+    isDemoMode,
+    isCompleted,
+    status: mission.status,
+    travelerSigns,
+    network: mission.network,
+  })
 
   async function handleSimulate() {
     setError(null)
@@ -209,6 +219,24 @@ export default function ActiveMissionPage() {
                 {error}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Warning banner if session key is missing */}
+      {sessionKeyMissing && (
+        <div
+          role="alert"
+          className="mb-6 p-4 rounded-2xl border border-alerta/40 bg-alerta/10 flex items-start gap-3 shadow-[0_0_24px_rgba(255,107,122,0.18)]"
+        >
+          <span className="material-symbols-outlined text-alerta text-xl shrink-0 mt-0.5">warning</span>
+          <div className="flex flex-col gap-1">
+            <span className="font-mono text-xs font-bold text-alerta tracking-wider uppercase">
+              SESSION KEY MISSING
+            </span>
+            <p className="text-xs text-textprimary leading-relaxed">
+              {MISSING_SESSION_KEY_WARNING}
+            </p>
           </div>
         </div>
       )}

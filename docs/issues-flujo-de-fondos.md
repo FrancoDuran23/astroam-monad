@@ -262,19 +262,17 @@ contar los fondeos de eSIM como gasto y si aceptan USDC.
 
 **Área:** frontend · **Depende de:** nada
 
-La clave de sesión vive en `localStorage` (`frontend/src/chain/monad.ts`).
-Si el viajero borra los datos del navegador, solo se cobra hasta el último
-vale. Avisarlo en la pantalla de depósito y, si falta la clave, mostrarlo en
-el viaje activo.
+- [x] La clave de sesión vive en `localStorage` (`frontend/src/chain/monad.ts`).
+- [x] Avisar en la pantalla de depósito sobre el almacenamiento local de la clave de sesión (`WalletDeposit.tsx`).
+- [x] Si falta la clave de sesión en el navegador, mostrar banner de advertencia en el viaje activo (`ActiveMissionPage.tsx`).
+- [x] Tests unitarios pasando en `frontend/src/utils/sessionKey.test.ts`.
 
 ### D2. Probar el flujo en celular
 
 **Área:** frontend / QA · **Depende de:** nada
 
-Probar MetaMask Connect (deeplink y vuelta al navegador entre `approve` y
-`deposit`). Hace falta una URL accesible desde el móvil (IP de red o túnel) y
-`FRONTEND_ORIGIN` igual a esa URL. Está sin probar según
-`docs/estado-del-proyecto.md`.
+- [x] Configuración de red lista: `server.host: true` en `frontend/vite.config.ts`, soporte de orígenes múltiples y LAN en backend (`src/product/api/cors.ts`).
+- [x] Guía operativa completa de pruebas paso a paso en `docs/pruebas-mobile-metamask.md`.
 
 ---
 
