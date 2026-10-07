@@ -10,10 +10,12 @@ que está en `MONAD_ESCROW_ADDRESS`.
 | Versión | Dirección | Fecha | Tx de deploy | Payee | Notas |
 |---|---|---|---|---|---|
 | v1 | `0xc6ead43fdf838198854f7811658cc4edd50f7a0f` | 3/10/2026 | [`0x1c81…2bbb`](https://testnet.monadvision.com/tx/0x1c810803b012fab6598c39e492c1b8aab83fe92fc05d1d98440aae5bb9142bbb) | `0x441D3f2b790bE54dd55C3D47778D3E0385064b40` | Sin `claim`. Reemplazada por la v2. Ver [registro-sesion-2026-10-03.md](registro-sesion-2026-10-03.md). |
-| **v2 (vigente)** | `0xb357ef379227c4113d3dc439af587437ff3e8292` | 5/10/2026 (22:13 ART, 2026-10-06 01:13 UTC), bloque 68552890 | [`0xc09f…8daa`](https://testnet.monadvision.com/tx/0xc09f2289c4b0fcab0ff52b6d054bcfff1f2def634c4e33533b488d7c5c2e8daa) | `0x441D3f2b790bE54dd55C3D47778D3E0385064b40` | Con `claim`. 36 tests de Foundry. [Ver en el explorador](https://testnet.monadvision.com/address/0xb357ef379227c4113d3dc439af587437ff3e8292). |
+| v2 | `0xb357ef379227c4113d3dc439af587437ff3e8292` | 5/10/2026 (22:13 ART, 2026-10-06 01:13 UTC) | [`0xc09f…8daa`](https://testnet.monadvision.com/tx/0xc09f2289c4b0fcab0ff52b6d054bcfff1f2def634c4e33533b488d7c5c2e8daa) | `0x441D3f2b790bE54dd55C3D47778D3E0385064b40` | Con `claim`. Reemplazada por v3 para usar el nuevo payee. |
+| **v3 (vigente)** | `0xe89893d51180e517e2bf175398aad2e6da82c0f9` | 6/10/2026 (22:46 ART, 2026-10-07 01:46 UTC) | [`0x5a8c…7a0b`](https://testnet.monadvision.com/tx/0x5a8c225be99ac3bf4f35eb2c0356b9d76808e1750a9cd2db3113915017327a0b) | `0xE3E38BE1522E2086B135cb9e9b3D223708485316` | Con `claim`. Payee operador propio. [Ver en el explorador](https://testnet.monadvision.com/address/0xe89893d51180e517e2bf175398aad2e6da82c0f9). |
 
 Tx completas: v1 `0x1c810803b012fab6598c39e492c1b8aab83fe92fc05d1d98440aae5bb9142bbb`,
-v2 `0xc09f2289c4b0fcab0ff52b6d054bcfff1f2def634c4e33533b488d7c5c2e8daa`.
+v2 `0xc09f2289c4b0fcab0ff52b6d054bcfff1f2def634c4e33533b488d7c5c2e8daa`,
+v3 `0x5a8c225be99ac3bf4f35eb2c0356b9d76808e1750a9cd2db3113915017327a0b`.
 
 ## Qué cambió de v1 a v2
 

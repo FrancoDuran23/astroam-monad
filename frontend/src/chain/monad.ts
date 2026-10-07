@@ -177,10 +177,15 @@ type SessionRecord = {
   rpcUrl?: string
 }
 
-const sessionStorageKey = (missionId: string) => `astroam_session_${missionId}`
+export const sessionStorageKey = (missionId: string) => `astroam_session_${missionId}`
+export const sessionKeyStorageKey = sessionStorageKey
 
-function loadSession(missionId: string): SessionRecord | null {
+export const MISSING_SESSION_KEY_WARNING =
+  'Session key not found in this browser. You cannot authorize new data usage on this device; only usage up to the last signed voucher will be billed.'
+
+export function loadSession(missionId: string): SessionRecord | null {
   try {
+    if (typeof localStorage === 'undefined') return null
     const raw = localStorage.getItem(sessionStorageKey(missionId))
     return raw ? (JSON.parse(raw) as SessionRecord) : null
   } catch {
@@ -189,11 +194,40 @@ function loadSession(missionId: string): SessionRecord | null {
 }
 
 function saveSession(missionId: string, record: SessionRecord): void {
-  localStorage.setItem(sessionStorageKey(missionId), JSON.stringify(record))
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(sessionStorageKey(missionId), JSON.stringify(record))
+    }
+  } catch {
+    // Storage access error non-fatal
+  }
 }
 
 export function hasSessionKey(missionId: string): boolean {
-  return loadSession(missionId) !== null
+  const session = loadSession(missionId)
+  return Boolean(session && session.privateKey)
+}
+
+export function shouldWarnMissingSessionKey(params: {
+  hasKey: boolean
+  isDemoMode?: boolean
+  isCompleted?: boolean
+  status?: string
+  travelerSigns?: boolean
+  network?: string
+}): boolean {
+  if (params.isDemoMode) return false
+  if (
+    params.isCompleted ||
+    params.status === 'completed' ||
+    params.status === 'cancelled' ||
+    params.status === 'pending_payment'
+  ) {
+    return false
+  }
+  const requiresSession = Boolean(params.travelerSigns || params.network?.startsWith('monad'))
+  if (!requiresSession) return false
+  return !params.hasKey
 }
 
 function sessionFor(missionId: string, plan: EvmDepositPlan): SessionRecord {

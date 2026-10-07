@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: true,
     port: 5173,
     // The backend serves the mission API under /api and /health, /ready at
     // the root: forward them as they are, without rewriting the path.

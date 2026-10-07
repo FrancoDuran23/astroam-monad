@@ -7,6 +7,7 @@ import {
   topupConfirmationSchema,
   demoTrafficSchema, authorizationSchema } from '../schemas/mission.ts'
 import { ResellerInsufficientFundsError } from '../../services/reseller-balance-guard.ts'
+import { corsMiddleware, isWildcardOrigin } from './cors.ts'
 
 function getId(req: Request): string {
   const raw = req.params.id
@@ -17,23 +18,12 @@ export function createProductRouter(service: MissionProductService): Router {
   const router = Router()
 
   // CORS Middleware
-  router.use((_req: Request, res: Response, next: NextFunction) => {
-    const origin = process.env.FRONTEND_ORIGIN || '*'
-    res.setHeader('Access-Control-Allow-Origin', origin)
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-    if (_req.method === 'OPTIONS') {
-      res.sendStatus(204)
-      return
-    }
-    next()
-  })
+  router.use(corsMiddleware)
 
   // Auth & Live Guard Middleware for mutable endpoints when live mode is active
   const requireAuthIfNeeded = (req: Request, res: Response, next: NextFunction) => {
     if (process.env.ASTROAM_LIVE_ENABLED === 'true') {
-      const origin = process.env.FRONTEND_ORIGIN
-      if (!origin || origin === '*') {
+      if (isWildcardOrigin(process.env.FRONTEND_ORIGIN)) {
         res.status(503).json({
           error: 'service_unavailable',
           message: "FRONTEND_ORIGIN con '*' no está permitido en modo live",

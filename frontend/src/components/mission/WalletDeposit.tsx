@@ -64,6 +64,18 @@ export default function WalletDeposit({ missionId, plan, onDeposited, label }: P
         You pay with MetaMask: on a phone it opens the app, on a computer it uses the extension or shows a QR. Test USDC comes from faucet.circle.com and MON for gas from faucet.monad.xyz.
       </p>
 
+      {plan.method === 'deposit' && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-xs text-amber-200">
+          <span className="material-symbols-outlined text-base text-amber-300 shrink-0 mt-0.5">warning</span>
+          <div className="flex flex-col gap-0.5 leading-relaxed">
+            <span className="font-bold text-amber-300">Session key saved in this browser</span>
+            <span>
+              The session key is saved in this browser. Clearing browser data means data usage can only be billed up to the last signed voucher.
+            </span>
+          </div>
+        </div>
+      )}
+
       <button type="button" onClick={() => void pay()} disabled={step !== null} className="w-full py-3.5 rounded-full bg-primaryviolet text-white font-sans font-bold text-sm uppercase tracking-wider shadow-[0_0_24px_rgba(123,92,255,0.55)] hover:bg-primaryviolet-hover disabled:opacity-50 transition-all flex items-center justify-center gap-2 min-h-[48px]">
         <span className="material-symbols-outlined text-[20px]">account_balance_wallet</span>
         {step ? STEP_LABEL[step] : label}

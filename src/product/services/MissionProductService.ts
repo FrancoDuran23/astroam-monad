@@ -10,7 +10,7 @@ import type { PaymentRail } from '../../rails/PaymentRail.ts'
 import { assertSufficientResellerBalance } from '../../services/reseller-balance-guard.ts'
 import { createChannelMutex } from '../../shared/mutex.ts'
 import { equivalentBytes } from '../../shared/usage-math.ts'
-import { atomicToRaw, rawToAtomicCeil, formatAtomic, usdcToAtomic } from '../../shared/monad/amounts.ts'
+import { atomicToRaw, rawToAtomicCeil, rawToAtomicFloor, formatAtomic, usdcToAtomic } from '../../shared/monad/amounts.ts'
 import {
   claimIsDue,
   nextFundCents,
@@ -20,6 +20,7 @@ import {
   DEFAULT_FUND_FLOW,
   DEFAULT_TIMEOUT_SECONDS,
 } from './fund-flow.ts'
+import { isWildcardOrigin } from '../api/cors.ts'
 
 const FUND_TOLERANCE_CENTS = 1
 const MICRO_USD_PER_CENT = 10_000n
@@ -120,7 +121,7 @@ export class MissionProductService {
     if (!process.env.CITRUS_API_KEY) missing.push('CITRUS_API_KEY')
     if (this.isLiveMode()) {
       if (!process.env.ASTROAM_DEMO_ACCESS_TOKEN) missing.push('ASTROAM_DEMO_ACCESS_TOKEN')
-      if (!process.env.FRONTEND_ORIGIN || process.env.FRONTEND_ORIGIN === '*') missing.push('FRONTEND_ORIGIN')
+      if (isWildcardOrigin(process.env.FRONTEND_ORIGIN)) missing.push('FRONTEND_ORIGIN')
     }
     return missing
   }
@@ -742,15 +743,9 @@ export class MissionProductService {
     }
     const amount = BigInt(voucher.cumulativeAtomic)
     const deposit = BigInt(mission.depositAtomic ?? '0')
-    const priceAtomic = usdcToAtomic(mission.destination.pricePerMbUsdc)
-    const meteredAtomic = (BigInt(mission.meteredBytes || '0') * priceAtomic) / 1_000_000n
-    const maxAtomic = deposit > 0n && meteredAtomic > deposit ? deposit : meteredAtomic
 
     if (deposit > 0n && amount > deposit) {
       throw new Error('The voucher authorizes more than the deposit')
-    }
-    if (amount > maxAtomic) {
-      throw new Error('The voucher authorizes more than the metered usage')
     }
     const held = mission.voucher ? BigInt(mission.voucher.cumulativeAtomic) : -1n
     if (amount < held) throw new Error('A higher voucher was already received')
@@ -920,9 +915,14 @@ export class MissionProductService {
       }
     }
 
+    const priceAtomic = usdcToAtomic(mission.destination.pricePerMbUsdc)
+    const meteredAtomic = (BigInt(mission.meteredBytes || '0') * priceAtomic) / 1_000_000n
+    const voucherAtomic = BigInt(mission.voucher.cumulativeAtomic)
+    const settleAtomic = meteredAtomic > voucherAtomic ? voucherAtomic : meteredAtomic
+
     const outcome = await this.rail.closeChannel(
       mission.channelId,
-      atomicToRaw(BigInt(mission.voucher.cumulativeAtomic)),
+      atomicToRaw(settleAtomic),
     )
     if (outcome.kind === 'failed') {
       if (this.rail.readEscrowState) {
@@ -935,7 +935,10 @@ export class MissionProductService {
       }
     }
 
-    const settled = BigInt(mission.voucher.cumulativeAtomic)
+    const settled =
+      (outcome.kind === 'closed' || outcome.kind === 'closed_unverified') && outcome.settledRaw !== undefined
+        ? rawToAtomicFloor(outcome.settledRaw)
+        : settleAtomic
     const deposit = BigInt(mission.depositAtomic ?? '0')
     mission.status = 'completed'
     mission.esimStatus = 'disabled'
