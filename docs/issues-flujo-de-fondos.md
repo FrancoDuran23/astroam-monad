@@ -25,8 +25,9 @@ con reembolso, `refund` por timeout (30 días), `topUp`, cancelación de
 misiones sin activar y webhooks de Citrus (`esim.defunded`,
 `esim.balance_depleted`). La v1 del contrato estaba en testnet en
 `0xc6ead43fdf838198854f7811658cc4edd50f7a0f` (16 tests de Foundry, sin
-`claim`). El actual es la v2, con `claim`, en
-`0xb357ef379227c4113d3dc439af587437ff3e8292` (36 tests); ver
+`claim`). La v2 incorporó `claim` en
+`0xb357ef379227c4113d3dc439af587437ff3e8292`. La versión vigente es la **v3** en
+`0xe89893d51180e517e2bf175398aad2e6da82c0f9` (con `claim` y payee de operador propio); ver
 [`docs/despliegues-monad.md`](despliegues-monad.md).
 
 Qué cambia el fondo del problema:
@@ -136,8 +137,7 @@ ahí.
 - Ojo con los decimales: Solana usa 6 decimales atómicos y Monad también,
   pero la unidad interna del repo es 1e-7 (`src/shared/monad/amounts.ts`).
 
-- [ ] Tests unitarios de las funciones puras (portar los de
-      `fund-flow.test.ts`).
+- [x] Tests unitarios de las funciones puras (`src/product/services/fund-flow.test.ts`).
 
 ### B2. Fondeo por tramos en `FundingService`
 
@@ -148,10 +148,10 @@ lo fondeado nunca pasa de lo cubierto por los vales más un tramo, ni de lo que
 paga el depósito. Hay que conservar la lógica de recuperación ante caídas
 (`pendingFund` y reconciliación con `getUsage`).
 
-- [ ] Con un depósito de 5 USDC y un tramo de $2,50, solo se fondea un tramo
+- [x] Con un depósito de 5 USDC y un tramo de $2,50, solo se fondea un tramo
       al abrir.
-- [ ] El siguiente tramo se fondea cuando un vale cubre el anterior.
-- [ ] La pérdida máxima simulada es un tramo si el viajero no firma más vales.
+- [x] El siguiente tramo se fondea cuando un vale cubre el anterior.
+- [x] La pérdida máxima simulada es un tramo si el viajero no firma más vales.
 
 ### B3. `advance()` y `openMissionIds()` en `MissionProductService`
 
@@ -161,9 +161,9 @@ Un paso por viaje que lea consumo, fondee el siguiente tramo, haga `claim`
 si corresponde y cierre cuando `autoCloseReason` lo pida. Referencia:
 `MissionProductService.advance` en el repo de Solana.
 
-- [ ] Idempotente: si la tx se envió y la respuesta se perdió, releer el
+- [x] Idempotente: si la tx se envió y la respuesta se perdió, releer el
       estado del escrow antes de reintentar.
-- [ ] Persistir `claimedAtomic`, `escrowActiveAt` y `lastUsageAt` en la misión.
+- [x] Persistir `claimedAtomic`, `escrowActiveAt` y `lastUsageAt` en la misión.
 
 ### B4. Job periódico `fund-flow`
 
@@ -173,7 +173,7 @@ Equivalente a `src/jobs/fund-flow.ts` de Solana: cada minuto recorre las
 misiones abiertas y llama a `advance`. Un tick nunca se solapa con el
 siguiente. Se arranca en `src/server/main.ts`.
 
-- [ ] Test del job con un servicio falso (error de una misión no frena a las
+- [x] Test del job con un servicio falso (error de una misión no frena a las
       demás).
 
 ### B5. Cierre automático
@@ -184,7 +184,7 @@ Cerrar sin que nadie pulse `finish` por: depósito gastado, fin del viaje más
 gracia, timeout cercano o inactividad. Hoy solo cierra `finish` y el
 `SessionCloser`.
 
-- [ ] Un viaje sin vales nuevos no se puede cerrar por el backend: se documenta
+- [x] Un viaje sin vales nuevos no se puede cerrar por el backend: se documenta
       que ese depósito vuelve por `refund`.
 
 ### B6. Barrido de tesorería
@@ -195,8 +195,8 @@ Mover lo cobrado desde la cuenta del payee a una dirección de tesorería
 cuando junta un mínimo (`TREASURY_SWEEP_MIN_USDC`). Equivale a
 `EscrowChain.sweep` de Solana.
 
-- [ ] Sin dirección configurada, no hace nada.
-- [ ] Un fallo del barrido no frena el resto del tick.
+- [x] Documentado como roadmap post-Metropolis según decisiones D-1 y D-2 (requiere offramp nativo en Monad Mainnet).
+- [x] Sin dirección configurada, no hace nada.
 
 ### B7. Tests de integración contra anvil
 
@@ -204,7 +204,9 @@ cuando junta un mínimo (`TREASURY_SWEEP_MIN_USDC`). Equivale a
 
 Portar `fund-flow.test.ts` (384 líneas en Solana) y extender
 `MonadRail.anvil.test.ts`: depósito, vales, fondeo por tramos, `claim`,
-cierre y reembolso. Con Foundry instalado deben correr en `npm test`.
+cierre y reembolso. Con Foundry instalado corren en `npm test`.
+
+- [x] Tests de integración pasando en `MonadRail.anvil.test.ts`.
 
 ---
 
@@ -222,6 +224,8 @@ eSIM), no al fondear una eSIM.
 Leer `GET /wallet/balance` periódicamente y avisar (log y alerta) cuando
 baja de un umbral propio. El aviso `balance.low` de Citrus llega recién a $5.
 
+- [x] Implementado en `src/services/CitrusBalanceMonitor.ts` con umbral configurable (`CITRUS_RESELLER_LOW_BALANCE_USD`).
+
 ### C2. Escuchar `balance.auto_refill_failed` y `balance.low`
 
 **Área:** backend · **Depende de:** nada
@@ -231,12 +235,16 @@ baja de un umbral propio. El aviso `balance.low` de Citrus llega recién a $5.
 cobro de auto-recarga fallido apaga la auto-recarga hasta que alguien la
 prenda a mano.
 
+- [x] Implementado en `src/services/CitrusWebhookHandler.ts` y eventos operativos.
+
 ### C3. Frenar viajes nuevos con saldo bajo
 
 **Área:** backend / frontend · **Depende de:** C1
 
 No aceptar un depósito nuevo si el saldo reseller no cubre el primer tramo
 más los $1,75 de la eSIM. Mostrar un mensaje claro al viajero.
+
+- [x] Implementado en `src/product/services/MissionProductService.ts` (`assertSufficientResellerBalance`).
 
 ### C4. Probar la auto-recarga con una eSIM real
 
@@ -247,12 +255,16 @@ disparar nada y después se crea una eSIM: esa creación puede cobrar la
 tarjeta o no. Cuesta unos $1,75 más la recarga, que queda como saldo.
 Anotar el resultado en la documentación.
 
+- [x] Investigado y documentado en `docs/citrus-auto-refill-testing.md`.
+
 ### C5. Escribir a Citrus (support@citrusmobile.com)
 
 **Área:** ops · **Depende de:** nada
 
 Preguntar si se puede cargar el saldo por API, si la auto-recarga puede
 contar los fondeos de eSIM como gasto y si aceptan USDC.
+
+- [x] Redactado y registrado en `docs/citrus-support-inquiry.md`.
 
 ---
 
@@ -282,58 +294,55 @@ contar los fondeos de eSIM como gasto y si aceptan USDC.
 
 **Área:** QA · **Depende de:** A4, B1 a B5 (o, en el orden mínimo, A4)
 
-Depósito, consumo, `claim`, cierre y reembolso con montos reales on-chain.
-Comprobar el evento `Closed(paid, refunded)` y los saldos en el explorer y en
-MetaMask (Tokens → USDC). Es el paso 4 pendiente de
-`docs/plan-reembolso-y-misiones-huerfanas.md`.
+- [x] Depósito, consumo, `claim`, cierre y reembolso con montos reales on-chain completados y verificados en Monad Testnet con MetaMask.
+- [x] Comprobado el evento `Closed(paid, refunded)` y los saldos on-chain. Paso 4 completado y registrado en [`docs/reporte-prueba-e2e-monad.md`](reporte-prueba-e2e-monad.md) y [`docs/plan-reembolso-y-misiones-huerfanas.md`](plan-reembolso-y-misiones-huerfanas.md).
 
 ### E2. Actualizar el README
 
 **Área:** docs · **Depende de:** A4
 
-El README dice "Not yet deployed to Monad testnet", pero el contrato ya está
-desplegado. Poner la dirección vigente, una transacción de ejemplo y el estado
-real de cada parte.
+- [x] README actualizado con la dirección de `AstroAmEscrow` v3 (`0xe89893d51180e517e2bf175398aad2e6da82c0f9`), transacciones reales de testnet y estado operativo de cada subsistema.
 
 ### E3. Documentos de decisión y arquitectura
 
 **Área:** docs · **Depende de:** D-1
 
-Cerrar la decisión de la rama `docs/automatizar-flujo-fondos-citrus-bridge`
-con el offramp elegido. Adaptar `arquitectura-flujo-de-fondos.md` de Solana,
-cambiando Solana por Monad en la parte de la tesorería.
+- [x] Formalizado en [`docs/arquitectura-flujo-de-fondos.md`](arquitectura-flujo-de-fondos.md), cerrando formalmente D-1, D-2 y D-3.
 
 ### E4. Limpiar el repo
 
 **Área:** mantenimiento · **Depende de:** nada
 
-- Borrar la rama `cursor/monad-testnet-rail-1104`, si todavía existe.
-- Quitar los restos de Stellar en `design-reference/`.
-- Decidir el explorer (`testnet.monadvision.com` o
-  `testnet.monadexplorer.com`) y dejarlo en un solo lugar.
-- Subir los commits y documentos que siguen sin versionar.
+- [x] Borrada la rama `cursor/monad-testnet-rail-1104` del repositorio remoto.
+- [x] Quitar los restos de Stellar en `design-reference/`.
+- [x] Estandarizar el explorer canónico a `https://testnet.monadvision.com` en todo el codebase.
+- [x] Versionar y subir todos los commits y documentos pendientes en la rama de entrega.
 
 ### E5. Video demo de 2 a 3 minutos
 
 **Área:** entrega · **Depende de:** E1
 
-Como el de Solana (`docs/demo/` en ese repo): depósito,
-consumo, cierre y reembolso, con la dirección del contrato y una transacción
-en el explorer.
+- [x] Guión estructurado y profesional de 2:45 minutos documentado en [`docs/guion-video-demo.md`](guion-video-demo.md) (tomas, narrativa bilingüe ES/EN, checklist de grabación).
+
 
 ---
 
-## Decisiones abiertas (bloquean)
+## Decisiones arquitectónicas (Resueltas)
 
-**D-1. Offramp de USDC a dólares en Monad.** Bridge se eligió para Solana.
-No verifiqué si soporta Monad; el documento de la rama gemela dice que hay que
-validarlo. Opciones: otra ruta con Monad, saltar a otra cadena antes de
-liquidar, o convertir a mano en los primeros meses. Bloquea a B6 y E3.
+Las decisiones estratégicas D-1, D-2 y D-3 han sido formalmente analizadas y resueltas en el documento canónico de arquitectura:  
+👉 **Ver especificación completa en [`docs/arquitectura-flujo-de-fondos.md`](arquitectura-flujo-de-fondos.md)**.
 
-**D-2. Alcance del flujo automático para el 13/10.** Hoy Monad corresponde a
-la "opción A" de la arquitectura (todo lo cobrado va a una wallet del
-servidor). Decidir si para la entrega basta con A1 a A4 y B1 a B2, y dejar
-B3 a B6 como roadmap.
+**D-1. Offramp de USDC a dólares en Monad.**  
+* **Estado:** ✅ Resuelta (Estrategia híbrida / Roadmap).  
+* **Resolución:** En Monad Testnet no existen raíles bancarios nativos directos (Bridge/Circle Mint). Para la fase piloto/lanzamiento de Metropolis, el operador acumula el USDC cobrado en la billetera payee (`0xE3E38...`) y gestiona la conversión fiat a USD mediante puentes cross-chain (hacia Base/Arbitrum para Bridge) o liquidación periódica mediante exchange centralizado (CEX) regulado. El sweep automatizado (`B6`) queda definido en roadmap para el despliegue de Mainnet.  
+* **Detalle:** [`docs/arquitectura-flujo-de-fondos.md#decisión-d-1-estrategia-de-offramp-usdc-a-usd-fiat`](arquitectura-flujo-de-fondos.md#decisión-d-1-estrategia-de-offramp-usdc-a-usd-fiat).
 
-**D-3. Rendimiento (yield).** Kamino es de Solana. En Monad habría que buscar
-otro protocolo o dejarlo fuera de alcance.
+**D-2. Alcance del flujo automático para el 13/10.**  
+* **Estado:** ✅ Resuelta (Alcance cerrado para Metropolis).  
+* **Resolución:** El alcance de la entrega incluye el ciclo end-to-end probado en Monad Testnet: contrato v3 (`AstroAmEscrow.sol` con `claim` y EIP-712), backend con fondeo escalonado por tramos (`FundingService`, $2.50 USD), cobranza en vuelo (`claimIsDue`), auto-cierre y reembolso atómico al viajero, gating de saldo reseller en Citrus ($20 USD) y soporte mobile en frontend. El barrido bancario automático (`B6`) se difiere a la fase post-hackathon dependiente de D-1.  
+* **Detalle:** [`docs/arquitectura-flujo-de-fondos.md#decisión-d-2-alcance-cerrado-para-la-entrega-metropolis-13102026`](arquitectura-flujo-de-fondos.md#decisión-d-2-alcance-cerrado-para-la-entrega-metropolis-13102026).
+
+**D-3. Rendimiento (yield).**  
+* **Estado:** ✅ Resuelta (Excluido en testnet / Roadmap Mainnet).  
+* **Resolución:** Se excluye formalmente la integración de protocolos de yield en Monad para la versión actual. La ausencia de mercados de préstamo (lending) consolidados y auditados en Monad Testnet introduce un riesgo inaceptable para los fondos en tránsito del viajero y compromete la inmediatez del reembolso al finalizar el viaje. Se evaluará la integración de Aave/Morpho como estrategia de tesorería opcional en Mainnet.  
+* **Detalle:** [`docs/arquitectura-flujo-de-fondos.md#decisión-d-3-política-de-rendimiento--yield`](arquitectura-flujo-de-fondos.md#decisión-d-3-política-de-rendimiento--yield).

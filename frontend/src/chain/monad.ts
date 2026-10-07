@@ -114,7 +114,7 @@ function chainOf(plan: EvmDepositPlan) {
     name: plan.chainName,
     nativeCurrency: { name: 'Monad', symbol: 'MON', decimals: 18 },
     rpcUrls: { default: { http: [plan.rpcUrl] } },
-    blockExplorers: { default: { name: 'Explorer', url: plan.explorer } },
+    blockExplorers: { default: { name: 'MonadVision', url: plan.explorer || 'https://testnet.monadvision.com' } },
   })
 }
 
