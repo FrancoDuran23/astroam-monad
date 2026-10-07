@@ -43,5 +43,5 @@ cd frontend && npm run dev -- --host   # frontend :5173
 - **`CONNECTIVITY_PROVIDER=citrus` está activo con la key real.** `/api/capabilities` marca `citrusReady: true`. Provisionar una eSIM en la prueba podría crear una real en Citrus (y costar). Si solo quieres probar el pago, cambia a `CONNECTIVITY_PROVIDER=fake` en `.env` y reinicia el backend.
 - **Modo demo, no live.** Con `ASTROAM_LIVE_ENABLED=false` no hace falta `ASTROAM_DEMO_ACCESS_TOKEN` ni `CITRUS_WEBHOOK_SECRET`. Para el modo live hacen falta ambos.
 - **Prueba en celular pendiente.** `localhost` no sirve desde el móvil. Hay que exponer el frontend con una IP de red o un túnel; además `FRONTEND_ORIGIN` debe coincidir con esa URL.
-- **Explorer sin decidir:** el código usa `testnet.monadvision.com` y la doc menciona `testnet.monadexplorer.com`.
+- **Explorer oficial:** estandarizado en `https://testnet.monadvision.com` (MonadVision).
 - **Pendientes del repo:** commit de este registro y de `docs/estado-del-proyecto.md` (siguen sin commitear), PR a `main`, borrar `cursor/monad-testnet-rail-1104`, quitar restos de Stellar en `design-reference/`, actualizar el README con la dirección del contrato y preparar la entrega del 13/10 (demo, video, contrato y tx de ejemplo).

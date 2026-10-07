@@ -28,9 +28,10 @@ Built for **Monad Metropolis 2026** (track: Consumer Products & Payments) by
 
 | Part | State |
 |---|---|
-| App (landing + trip flow), mission API, metering, cutoff policy, vouchers | **Working**, end to end, with simulated payments and a simulated eSIM |
-| Payment channel on Monad: `AstroAmEscrow` contract, `MonadRail`, wallet flow in the app | **Implemented and tested on a local chain** (Foundry + anvil end to end). **Deployed on Monad testnet** at [`0xb357ef37…8292`](https://testnet.monadvision.com/address/0xb357ef379227c4113d3dc439af587437ff3e8292) (v2, with `claim`). Default stays `PAYMENT_RAIL=fake` |
-| Citrus Mobile eSIM provider | Implemented, **not yet tested against the real API** (no sandbox; needs a funded reseller account) |
+| App (landing + trip flow), mission API, metering, cutoff policy, vouchers | **Working**, end to end, with local simulation or live network execution |
+| Monad payments & Escrow: `AstroAmEscrow.sol` (v3), `MonadRail`, session vouchers EIP-712 | **Live & deployed on Monad Testnet** at [`0xe89893d5…c0f9`](https://testnet.monadvision.com/address/0xe89893d51180e517e2bf175398aad2e6da82c0f9). End-to-end cycle verified on-chain (deposits, claims, auto-close, settlement & refunds). Tested on anvil (`npm test`). Default: `PAYMENT_RAIL=fake` |
+| Citrus Mobile eSIM provider | **Integrated** (reseller API client, webhook handlers, balance monitoring & mission gating; auto-refill testing and support inquiry documented) |
+| MetaMask Connect & Mobile Experience | **Verified** (EVM wallet connection via MetaMask/Rabby on Monad Testnet, ephemeral session keys in `localStorage`, mobile warnings and LAN testing guide) |
 
 Everything simulated is labeled in the UI ("Simulated payments", "Simulated QR").
 
@@ -97,7 +98,14 @@ frontend/       React + Vite + Tailwind; starfield in components/StarfieldBackgr
 | `close(escrowId, voucherAmount, signature, settleAmount)` | AstroAm (payee) | Pays the total `settleAmount` (usage: ≥ already claimed, ≤ the signed voucher) and refunds the rest |
 | `refund(escrowId)` | anyone, after the timeout | Returns what was not claimed to the traveler, once the timeout has passed since the last deposit, top-up or claim |
 
-Deployed addresses and the v1 → v2 changes: [`docs/despliegues-monad.md`](docs/despliegues-monad.md).
+Deployed on **Monad Testnet** (Chain ID `10143`):
+- **Contract Address (v3):** [`0xe89893d51180e517e2bf175398aad2e6da82c0f9`](https://testnet.monadvision.com/address/0xe89893d51180e517e2bf175398aad2e6da82c0f9)
+- **Deploy Transaction:** [`0x5a8c225be99ac3bf4f35eb2c0356b9d76808e1750a9cd2db3113915017327a0b`](https://testnet.monadvision.com/tx/0x5a8c225be99ac3bf4f35eb2c0356b9d76808e1750a9cd2db3113915017327a0b)
+- **Verifiable End-to-End Cycle on Testnet:**
+  - *Deposit (5 USDC):* [`0x9afbb1f19e7a7ea3fb56cdf043b618605f562ef69531a823523334d22f8275e0`](https://testnet.monadvision.com/tx/0x9afbb1f19e7a7ea3fb56cdf043b618605f562ef69531a823523334d22f8275e0)
+  - *Close with Settlement & Refund (2.5 USDC settled, 2.5 USDC refunded):* [`0xb8125f53a7ab622983f8e2e1ee65c3bc9ffe94ae5a9173abe096eafa44f5684f`](https://testnet.monadvision.com/tx/0xb8125f53a7ab622983f8e2e1ee65c3bc9ffe94ae5a9173abe096eafa44f5684f)
+- **Deployment Log & Versions:** [`docs/despliegues-monad.md`](docs/despliegues-monad.md)
+- **Fund Flow Architecture & Decisions:** [`docs/arquitectura-flujo-de-fondos.md`](docs/arquitectura-flujo-de-fondos.md)
 
 Vouchers are EIP-712 `Voucher(bytes32 escrowId, uint256 cumulativeAmount)`,
 signed by the session key or the traveler's wallet. The API keeps the highest
@@ -144,7 +152,7 @@ Leave `frontend/.env` out: Vite proxies `/api` to the backend. On the trip
 screen, **Use 250 MB** simulates a carrier reading (5 USDC in Brazil runs out
 after 8).
 
-Checks: `npm test` and `npm run check` (backend), `npm test` and `npx tsc --noEmit` (frontend),
+Checks: `npm test` and `npm run check` (backend), `npm --prefix frontend test` and `npm --prefix frontend run typecheck` (frontend),
 `npm run contracts:test` (Foundry). With Foundry installed, `npm test` also runs
 `src/rails/MonadRail.anvil.test.ts`: deploy on anvil, deposit, vouchers,
 metering, close, balances.
@@ -153,10 +161,8 @@ metering, close, balances.
 
 1. Get MON for gas at [faucet.monad.xyz](https://faucet.monad.xyz) (deployer/payee account)
    and test USDC at [faucet.circle.com](https://faucet.circle.com) (traveler wallet).
-2. Deploy: `MONAD_DEPLOYER_PRIVATE_KEY=0x… npm run monad:deploy`. The deployer is the payee
-   by default.
-3. In `.env`: `PAYMENT_RAIL=monad`, `MONAD_ESCROW_ADDRESS=<printed>`,
-   `MONAD_PAYEE_PRIVATE_KEY=<payee key>`. Restart the API.
+2. Use the currently deployed contract (v3 at `0xe89893d51180e517e2bf175398aad2e6da82c0f9`) or deploy a new one: `MONAD_DEPLOYER_PRIVATE_KEY=0x… npm run monad:deploy`. The deployer is the payee by default.
+3. In `.env`: `PAYMENT_RAIL=monad`, `MONAD_ESCROW_ADDRESS=0xe89893d51180e517e2bf175398aad2e6da82c0f9`, `MONAD_PAYEE_PRIVATE_KEY=<payee key>`. Restart the API.
 4. In the app, the deposit and top-up buttons open MetaMask or Rabby on Monad testnet.
 
 ## Risks, stated plainly
@@ -176,5 +182,9 @@ metering, close, balances.
 
 | Read | For |
 |---|---|
+| [`docs/arquitectura-flujo-de-fondos.md`](docs/arquitectura-flujo-de-fondos.md) | Canonical fund flow architecture on Monad, offramp strategy, Citrus tranches, and D-1, D-2, D-3 resolutions (Spanish). |
+| [`docs/despliegues-monad.md`](docs/despliegues-monad.md) | Deployment registry, contract addresses (v1, v2, v3), and verifiable testnet tx hashes (Spanish). |
+| [`docs/issues-flujo-de-fondos.md`](docs/issues-flujo-de-fondos.md) | Roadmap tracker and status of automatic fund flow milestones (Spanish). |
+| [`docs/pruebas-mobile-metamask.md`](docs/pruebas-mobile-metamask.md) | Mobile testing guide with MetaMask Mobile, session keys, and local network setup (Spanish). |
 | [`docs/decisiones/medicion-con-proveedor.md`](docs/decisiones/medicion-con-proveedor.md) | Why usage is metered by the carrier, not by our own gateway (Spanish). |
 | [`docs/citrus-mobile-brief.md`](docs/citrus-mobile-brief.md), [`docs/citrus-mobile-spec.md`](docs/citrus-mobile-spec.md) | The Citrus Mobile integration (Spanish). |

@@ -157,7 +157,7 @@ The target audience encompasses digital nomads, international business travelers
 
 The aesthetic is characterized by:
 - **Luminous Precision:** Clean, warm off-white canvas backgrounds punctuated by high-contrast primary typography and sharp structural cards.
-- **Electric Accents:** Energetic violet sparks juxtaposed with telemetry teal and active protocol indicators (emerald active nodes and stellar amber alerts).
+- **Electric Accents:** Energetic violet sparks juxtaposed with telemetry teal and active protocol indicators (emerald active nodes and amber protocol alerts).
 - **Tactile Softness:** Fully rounded pill shapes for primary actions and status chips counterbalanced by structured, gently radiused data containers.
 - **Glass & Diffusion:** High-clarity ambient depth, gossamer borders, and frosted telemetry overlays that evoke airborne instrumentation.
 
@@ -173,8 +173,8 @@ The palette is engineered to achieve immediate clarity in daylight conditions wh
 ### Secondary & Functional Spectrum (Telemetry & Network Health)
 - **Telemetry Teal (`#008C99`):** Represents live data streams, connection pipelines, and real-time connectivity indicators.
 - **Teal Light Wash (`#E5F7F8`):** Data metrics background fill and connectivity sub-panels.
-- **Active Node Green (`#31C48D`):** Live telemetry indicators, confirmed Soroban smart contract micropayments, and positive ledger balances.
-- **Stellar Alert Amber (`#FDDA24`):** Protocol indicators, testnet warnings, and fuel reserve notifications.
+- **Active Node Green (`#31C48D`):** Live telemetry indicators, confirmed Monad smart contract micropayments, and positive ledger balances.
+- **Alert Amber (`#FDDA24`):** Protocol indicators, testnet warnings, and fuel reserve notifications.
 
 ### Neutral & Surface Hierarchy
 - **Canvas Base (`#FAF9F7`):** Warm, tactile atmospheric off-white background that eliminates clinical glare.
@@ -256,7 +256,7 @@ The shape system employs an intentional contrast between aerodynamic pill elemen
 
 ### 3. Metric & Telemetry Cards
 - Surface: `#FFFFFF` with `1px solid #E8E5E4` border and `rounded-2xl` geometry.
-- Layout: Split origin-destination header (e.g., Buenos Aires to Santiago) linked by a stylized dotted or gradient route line denoting Soroban smart contract channels.
+- Layout: Split origin-destination header (e.g., Buenos Aires to Santiago) linked by a stylized dotted or gradient route line denoting Monad smart contract channels.
 - Sub-cards (Fuel & Active Consumption):
   - Inset surface: `#F8F7F5`.
   - Radii: `rounded-xl`.

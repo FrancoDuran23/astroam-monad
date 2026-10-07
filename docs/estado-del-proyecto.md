@@ -20,7 +20,7 @@ Verificado contra el RPC en vivo:
 - USDC (Circle) `0x534b2f3A21130d7a60830c2Df862319e593943A3`: tiene código y `decimals()` = **6**.
 - Fees sanos: base fee ≈ 100 gwei, propina mínima 2 gwei, `eth_feeHistory` disponible.
 - El código convierte de la unidad interna (1e-7) a los 6 decimales de USDC en `src/shared/monad/amounts.ts`.
-- Pendiente de decidir: explorer oficial. El código usa `testnet.monadvision.com`; una búsqueda devolvió `testnet.monadexplorer.com`.
+- Explorer oficial: estandarizado en `https://testnet.monadvision.com` (MonadVision).
 
 ## 4. Cronología de lo hecho
 1. **Revisión de ramas y credenciales.** Se listó qué falta y qué credenciales hacen falta.
