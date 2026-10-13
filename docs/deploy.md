@@ -59,7 +59,7 @@ Then open `<app-url>`, connect a wallet on Monad testnet, and start a trip. A te
 
 ## Limit of the free plan
 
-The free plan has no disk. Missions and stored vouchers are JSON files under `DATA_DIR`, so every restart, redeploy or sleep after idle time erases them. A trip that was open then has no record on the API, and the traveler recovers the deposit through the contract's refund once the escrow timeout has passed. This is a documented limit of the testnet demo, not a bug to chase. Do not run a demo you care about on it, and avoid redeploying while a trip is open.
+The free plan has no disk. Missions and stored vouchers are JSON files under `DATA_DIR`, so every restart, redeploy or sleep after idle time erases them. The mission log (`mission-log.jsonl`) is under `DATA_DIR` too and is lost the same way. A trip that was open then has no record on the API, and the traveler recovers the deposit through the contract's refund once the escrow timeout has passed. This is a documented limit of the testnet demo, not a bug to chase. Do not run a demo you care about on it, and avoid redeploying while a trip is open.
 
 The paid alternative is a Render persistent disk. Move the service to a paid plan, add a disk, mount it at a path such as `/app/data` and keep `DATA_DIR` pointing at that mount. Missions and vouchers then survive restarts. Note that the container runs as the non-root `node` user, so check the mount is writable by it.
 

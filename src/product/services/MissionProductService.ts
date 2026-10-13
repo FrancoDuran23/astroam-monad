@@ -30,6 +30,12 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** What a failure entry of the log carries: the error's code when it has one, and a short detail. */
+function failureData(error: unknown): MissionLogEntry['data'] {
+  const code = (error as { code?: unknown } | null)?.code
+  return { code: typeof code === 'string' ? code : null, detail: messageOf(error).slice(0, 160) }
+}
+
 /** The usage figures every usage entry of the log carries. */
 function usageData(mission: ProductMission, extra: MissionLogEntry['data']): MissionLogEntry['data'] {
   return {
@@ -153,6 +159,8 @@ export class MissionProductService {
   private now: () => number
   private locks = createChannelMutex()
   private marginErrorLogged = false
+  /** The detail of the last tranche failure logged per trip, until a tranche succeeds. */
+  private lastFundFailure = new Map<string, string>()
   /** Last answer of the rail's readiness check, shared by callers until it expires. */
   private railCheck?: { answer: Promise<Readiness>; expiresAt: number }
 
@@ -325,6 +333,11 @@ export class MissionProductService {
     }
 
     await this.repo.save(mission)
+    this.record(mission, 'mission.created', {
+      destinationId: mission.destination.id,
+      budgetUsdc: mission.budgetUsdc,
+      durationDays: mission.durationDays,
+    })
     return { id: mission.id, status: mission.status }
   }
 
@@ -424,6 +437,12 @@ export class MissionProductService {
     if (result.sessionKey) mission.sessionKey = result.sessionKey
     mission.escrowActiveAt = result.escrowActiveAt ?? new Date().toISOString()
     await this.repo.save(mission)
+    this.record(mission, 'escrow.deposit', {
+      txHash: result.txHash,
+      channelId: result.channelId,
+      depositAtomic: mission.depositAtomic ?? null,
+      travelerAddress: mission.travelerAddress ?? null,
+    })
 
     return {
       valid: true,
@@ -454,9 +473,14 @@ export class MissionProductService {
       return { missionId: mission.id, status: mission.status, isMock: !this.hasCitrusReal, esim: mission.esim }
     }
 
-    await assertSufficientResellerBalance(this.connectivity)
-
-    const esimRecord = await this.connectivity.provisionEsim(mission.userId)
+    let esimRecord: Awaited<ReturnType<ConnectivityProvider['provisionEsim']>>
+    try {
+      await assertSufficientResellerBalance(this.connectivity)
+      esimRecord = await this.connectivity.provisionEsim(mission.userId)
+    } catch (error) {
+      this.record(mission, 'esim.provision_failed', failureData(error))
+      throw error
+    }
     const publicEsim: PublicEsimInfo = {
       iccid: esimRecord.iccid,
       lpaString: esimRecord.lpaString,
@@ -732,15 +756,21 @@ export class MissionProductService {
       mission.esimStatus = 'active'
     }
     await this.repo.save(mission)
+    this.record(mission, 'escrow.topup', {
+      txHash: result.txHash,
+      addedAtomic: rawToAtomicCeil(result.amountRaw).toString(),
+      depositAtomic: mission.depositAtomic ?? null,
+    })
     if (resumed) this.record(mission, 'esim.resumed', { reason: 'topup' })
 
     if (mission.iccid) {
+      const cents = Math.max(1, Math.round(addedUsdc * 100))
       try {
-        const cents = Math.max(1, Math.round(addedUsdc * 100))
         await this.connectivity.topUp(mission.iccid, cents)
         this.record(mission, 'esim.funded', { amountCents: cents, source: 'topup', fundedCents: mission.fundedCents ?? 0 })
-      } catch {
+      } catch (error) {
         // The eSIM wallet catches up on the next funding pass.
+        this.record(mission, 'esim.fund_failed', { source: 'topup', amountCents: cents, ...failureData(error) })
       }
     }
 
@@ -1204,10 +1234,12 @@ export class MissionProductService {
       const spent = usage.chargedMicroUsd > baseline ? usage.chargedMicroUsd - baseline : 0n
       // Everything funded this trip is either still in the wallet or already spent.
       const expected = BigInt(funded + mission.pendingFund.amountCents - FUND_TOLERANCE_CENTS) * MICRO_USD_PER_CENT
-      if (usage.walletMicroUsd + spent >= expected) funded += mission.pendingFund.amountCents
+      const recovered = usage.walletMicroUsd + spent >= expected ? mission.pendingFund.amountCents : 0
+      funded += recovered
       mission.fundedCents = funded
       mission.pendingFund = undefined
       await this.repo.save(mission)
+      if (recovered > 0) this.record(mission, 'esim.funded', { amountCents: recovered, source: 'recovered', fundedCents: funded })
     }
 
     const amount = nextFundCents(
@@ -1222,7 +1254,18 @@ export class MissionProductService {
 
     mission.pendingFund = { amountCents: amount, requestedAt: new Date().toISOString() }
     await this.repo.save(mission)
-    await this.connectivity.topUp(iccid, amount)
+    try {
+      await this.connectivity.topUp(iccid, amount)
+    } catch (error) {
+      // Every pass retries a failed tranche: the same failure is logged once, not once per pass.
+      const failure = failureData(error)
+      if (this.lastFundFailure.get(mission.id) !== failure.detail) {
+        this.lastFundFailure.set(mission.id, String(failure.detail))
+        this.record(mission, 'esim.fund_failed', { source: 'tranche', amountCents: amount, ...failure })
+      }
+      throw error
+    }
+    this.lastFundFailure.delete(mission.id)
     mission.fundedCents = funded + amount
     mission.pendingFund = undefined
     await this.repo.save(mission)

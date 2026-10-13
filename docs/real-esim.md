@@ -54,7 +54,7 @@ Run it on a laptop, not on a public URL (see the next section). Nothing below ha
 6. Scan the QR with a phone. It is a real install code now. Citrus covers Argentina, so the test can be done at home.
 7. Use some data. Citrus reports usage with a delay of the order of ten minutes (as recorded in astroam-solana's run; not yet observed on Monad), so the first reading takes a while.
 8. When usage shows, the app signs vouchers and the backend claims what was used once it reaches `CLAIM_MIN_USDC`. End the trip in the app. The close pays what was used to the payee and refunds the rest to the traveler.
-9. Write down the ICCID with the middle digits hidden, the usage Citrus reported, and the explorer links of the deposit, a claim and the close. Link them from the README. The mission log (`GET /api/missions/:id/logs`, spec 06) is the dump to attach.
+9. Write down the ICCID with the middle digits hidden, the usage Citrus reported, and the explorer links of the deposit, a claim and the close. Link them from the README. The mission log (`GET /api/missions/:id/logs`, spec 06) is the dump to attach. Produce it with `npm run log:dump -- <missionId> --out docs/evidence/<date>-real-esim-mission-log.txt`.
 
 What the run costs in real money: $1.75, plus whatever data is used. The part of the tranche that is not used goes back to the reseller balance when the trip closes. The USDC is testnet USDC.
 

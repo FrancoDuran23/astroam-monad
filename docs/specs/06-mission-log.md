@@ -41,6 +41,8 @@ and the route in its `routes.ts`.
    | `escrow.claim` | a claim transaction is confirmed |
    | `mission.closed` | the escrow is closed or the mission cancelled |
 
+   [Spec 13](13-mission-log-gaps.md) adds the purchase, top-up and failure events.
+
    There is no `escrow.checkpoint` and no `voucher.signed` by the backend:
    on Monad the traveler's session key signs.
 3. Entries carry amounts as strings in atomic units and transaction hashes
