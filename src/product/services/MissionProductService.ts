@@ -201,6 +201,11 @@ export class MissionProductService {
   }
 
   async createPaymentIntent(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.createPaymentIntentLocked(missionId))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async createPaymentIntentLocked(missionId: string) {
     const mission = await this.load(missionId)
     if (this.isLiveMode() && !this.rail.isLive) {
       throw unavailable('payments are simulated; configure a live payment rail for live mode')
@@ -232,6 +237,11 @@ export class MissionProductService {
   }
 
   async confirmPayment(missionId: string, intentId: string, txHash: string) {
+    return this.locks.withChannelLock(missionId, () => this.confirmPaymentLocked(missionId, intentId, txHash))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async confirmPaymentLocked(missionId: string, intentId: string, txHash: string) {
     const mission = await this.load(missionId)
 
     if (mission.paymentStatus === 'paid' && mission.depositTxHash) {
@@ -278,6 +288,11 @@ export class MissionProductService {
   }
 
   async activateMission(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.activateMissionLocked(missionId))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async activateMissionLocked(missionId: string) {
     const mission = await this.load(missionId)
 
     if (mission.paymentStatus !== 'paid' || !mission.channelId) {
@@ -329,7 +344,7 @@ export class MissionProductService {
 
     // First tranche. A failure here does not undo the activation: the fund-flow job retries.
     try {
-      await this.locks.withChannelLock(mission.id, async () => this.fundTranche(await this.load(mission.id)))
+      await this.fundTranche(mission)
     } catch (error) {
       this.logger({ level: 'error', msg: 'first tranche not funded', missionId: mission.id, detail: messageOf(error) })
     }
@@ -385,6 +400,11 @@ export class MissionProductService {
   }
 
   async pauseMission(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.pauseMissionLocked(missionId))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async pauseMissionLocked(missionId: string) {
     const mission = await this.load(missionId)
     if (this.isLiveMode() && !this.hasCitrusReal) {
       throw unavailable('Citrus Mobile is not configured for live mode')
@@ -401,6 +421,11 @@ export class MissionProductService {
   }
 
   async resumeMission(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.resumeMissionLocked(missionId))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async resumeMissionLocked(missionId: string) {
     const mission = await this.load(missionId)
     if (this.isLiveMode() && !this.hasCitrusReal) {
       throw unavailable('Citrus Mobile is not configured for live mode')
@@ -417,6 +442,11 @@ export class MissionProductService {
   }
 
   async createTopUpIntent(missionId: string, amountUsdc: number) {
+    return this.locks.withChannelLock(missionId, () => this.createTopUpIntentLocked(missionId, amountUsdc))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async createTopUpIntentLocked(missionId: string, amountUsdc: number) {
     const mission = await this.load(missionId)
     if (!mission.channelId) throw new Error('This mission has no payment channel yet')
     if (this.isLiveMode() && !this.rail.isLive) {
@@ -474,6 +504,11 @@ export class MissionProductService {
   }
 
   async confirmTopUpPayment(missionId: string, intentId: string, txHash: string) {
+    return this.locks.withChannelLock(missionId, () => this.confirmTopUpPaymentLocked(missionId, intentId, txHash))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async confirmTopUpPaymentLocked(missionId: string, intentId: string, txHash: string) {
     const mission = await this.load(missionId)
 
     const topup = mission.topups.find((t) => t.intentId === intentId)
@@ -524,6 +559,11 @@ export class MissionProductService {
   }
 
   async finishMission(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.finishMissionLocked(missionId))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async finishMissionLocked(missionId: string) {
     const mission = await this.load(missionId)
     if (!mission.channelId) throw new Error('This mission has no payment channel to close')
     if (this.isLiveMode() && !this.rail.isLive) {
@@ -574,6 +614,11 @@ export class MissionProductService {
    * (no eSIM, no usage). The rail closes the channel with nothing to settle.
    */
   async cancelMission(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.cancelMissionLocked(missionId))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async cancelMissionLocked(missionId: string) {
     const mission = await this.load(missionId)
     const result = () => ({
       status: 'cancelled' as const,
@@ -652,7 +697,11 @@ export class MissionProductService {
     if (process.env.ENABLE_DEMO_TRAFFIC !== 'true') {
       throw new Error('Demo traffic injection is not enabled on this server')
     }
+    return this.locks.withChannelLock(missionId, () => this.processDemoTrafficLocked(missionId, bytes))
+  }
 
+  /** Assumes the caller holds the mission's channel lock. */
+  private async processDemoTrafficLocked(missionId: string, bytes: number) {
     const mission = await this.load(missionId)
     if (mission.status !== 'active' || mission.esimStatus !== 'active' || !mission.channelId) {
       throw new Error('Traffic can only be injected into an active mission')
@@ -860,11 +909,26 @@ export class MissionProductService {
     }
   }
 
+  /** When the rail reports the channel's claimed total already covers the voucher, records it. */
+  private async recordClaimedOnChain(mission: ProductMission, voucherAtomic: bigint): Promise<boolean> {
+    if (!this.rail.readEscrowState || !mission.channelId) return false
+    const state = await this.rail.readEscrowState(mission.channelId)
+    if (!state || state.claimedAtomic < voucherAtomic) return false
+    mission.claimedAtomic = state.claimedAtomic.toString()
+    if (state.activeAt) mission.escrowActiveAt = new Date(state.activeAt * 1000).toISOString()
+    await this.repo.save(mission)
+    return true
+  }
+
   /** Sends a `claim` when the voucher holds a tranche not collected yet. */
   private async claimIfDue(mission: ProductMission, now: Date): Promise<ClaimRecord | null> {
     if (!this.rail.claim || !mission.depositVerified || !mission.channelId || !mission.voucher) return null
     const voucherAtomic = BigInt(mission.voucher.cumulativeAtomic)
     if (!claimIsDue(voucherAtomic, BigInt(mission.claimedAtomic ?? '0'), this.fundFlow)) return null
+
+    // The chain may already hold this claim (it landed, but was never recorded):
+    // take what it says instead of sending it again.
+    if (await this.recordClaimedOnChain(mission, voucherAtomic)) return null
 
     let txHash: string
     try {
@@ -875,15 +939,7 @@ export class MissionProductService {
       })
       txHash = claimRes.txHash
     } catch (error) {
-      if (this.rail.readEscrowState) {
-        const state = await this.rail.readEscrowState(mission.channelId)
-        if (state && state.claimedAtomic >= voucherAtomic) {
-          mission.claimedAtomic = state.claimedAtomic.toString()
-          if (state.activeAt) mission.escrowActiveAt = new Date(state.activeAt * 1000).toISOString()
-          await this.repo.save(mission)
-          return null
-        }
-      }
+      if (await this.recordClaimedOnChain(mission, voucherAtomic)) return null
       throw error
     }
     const record: ClaimRecord = {
