@@ -11,13 +11,13 @@ import { isNetwork } from "./network.ts";
 // each payment rail converts it to its token's decimals. Never a JSON number
 // (exceeds Number.MAX_SAFE_INTEGER for real sessions), never a decimal
 // string like "0.0125" (VE-R3), and never a leading-zero string like "007"
-// (review finding, Lote C: "007" is not a canonical integer literal and
+// (review finding, Batch C: "007" is not a canonical integer literal and
 // must not silently round-trip as 7).
 const RAW_AMOUNT_RE = /^(0|[1-9]\d*)$/;
 
 // Upper bound (2**127 - 1): an amount above this can never be a real balance
 // and must be rejected before it reaches BigInt arithmetic anywhere
-// downstream (review finding, Lote C).
+// downstream (review finding, Batch C).
 const MAX_I128 = 2n ** 127n - 1n;
 
 // A voucher signature as hex (optional 0x): 64 bytes for ed25519, 65 for an
@@ -49,7 +49,7 @@ const rawAmountSchema = z
  * `channel` is omitted in stage 1 (charge mode) and required in stage 2
  * (VE-R5); that distinction is enforced by the route handler, not here, so
  * the same schema serves both stages (design 4.1). `.strict()` (review
- * finding, Lote C, VE-R2 "schema estricto"): an unknown key must be a `400`,
+ * finding, Batch C, VE-R2 "strict schema"): an unknown key must be a `400`,
  * never silently ignored.
  */
 export const message1Schema = z
@@ -62,7 +62,7 @@ export const message1Schema = z
     cumulativeBytes: z.number().int().nonnegative(),
     cumulativeAmount: rawAmountSchema,
     meterReadingId: z.string().min(1),
-    // `offset: true` (review finding, Lote C): the meter may report in its
+    // `offset: true` (review finding, Batch C): the meter may report in its
     // own local offset instead of normalizing to UTC first; VE-R2 asks for
     // a valid ISO datetime, not specifically a UTC one.
     observedAt: z.iso.datetime({ offset: true }),
@@ -72,7 +72,7 @@ export const message1Schema = z
 export type Message1 = z.infer<typeof message1Schema>;
 
 // Derived from `REASONS` (reasons.ts) instead of its own literal list, so the
-// two tables can never drift apart (review finding, Lote B).
+// two tables can never drift apart (review finding, Batch B).
 const reasonSchema = z.custom<Reason>(isReason, { message: "must be a reason known to REASONS" });
 
 /** Message 2, signed branch (VE-R7). */
@@ -99,7 +99,7 @@ export type Message2Signed = z.infer<typeof message2SignedSchema>;
  * Message 2, unsigned branch (VE-R8). `retryable` is explicit — the gateway
  * must never derive it from `reason` (FT-R1) — and is cross-checked against
  * the `REASONS` table by the `.refine` below, so a handler can never emit an
- * envelope where the two disagree (review finding, Lote B).
+ * envelope where the two disagree (review finding, Batch B).
  *
  * `sessionId` and `meterReadingId` are nullable, not just optional: the
  * fail-closed middleware (`requireReady`, FC-R5) answers before any request
@@ -129,7 +129,7 @@ export const message2UnsignedSchema = z
 export type Message2Unsigned = z.infer<typeof message2UnsignedSchema>;
 
 /**
- * The only way to build an unsigned M2 envelope (review finding, Lote B):
+ * The only way to build an unsigned M2 envelope (review finding, Batch B):
  * `retryable` and the HTTP status are always derived from `REASONS`, never
  * written by hand at a call site. `remaining` defaults to `"0"` for contexts
  * with no channel/voucher (stage 1 direct charges, pre-body-parse

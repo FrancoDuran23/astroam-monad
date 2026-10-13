@@ -1,12 +1,14 @@
-// Rules of the automatic fund flow for Monad (docs/issues-flujo-de-fondos.md B1).
+// Rules of the automatic fund flow for Monad (docs/decisions/automate-fund-flow-issues.md B1).
 //
 // AstroAm advances USD to the eSIM and collects USDC from the escrow. Two
 // rules keep what it can lose at one tranche:
 //
 // - the eSIM wallet is never funded more than one tranche ahead of what the
 //   traveler's vouchers already cover, and never past what the deposit pays for;
-// - a voucher is collected with `claim` once it is worth a tranche, so a
-//   traveler who closes with an old voucher cannot take that part back.
+// - usage is collected with `claim` once it is worth a tranche, so a
+//   traveler who closes with an old voucher cannot take that part back. A
+//   voucher is a ceiling the app signs ahead of usage, not a bill: a claim
+//   collects what was used, up to the voucher, never the voucher itself.
 //
 // Pure functions: no provider, no chain, no clock of their own.
 
@@ -21,7 +23,7 @@ export type FundFlowConfig = {
   markupBps: number;
   /** USD per USDC, basis points (`USDC_USD_RATE_BPS`). */
   usdcUsdRateBps: number;
-  /** Uncollected voucher amount that triggers a claim, USDC atomic units (`CLAIM_MIN_USDC`). */
+  /** Used and signed for but not collected yet: the amount that triggers a claim, USDC atomic units (`CLAIM_MIN_USDC`). */
   claimMinAtomic: bigint;
   /** How long before the escrow's refund timeout the backend closes, seconds (`ESCROW_CLOSE_MARGIN_SECONDS`). */
   closeMarginSeconds: number;
@@ -30,8 +32,6 @@ export type FundFlowConfig = {
   /** How long after the trip's end date the backend closes, seconds (`ESCROW_TRIP_END_GRACE_SECONDS`). */
   tripEndGraceSeconds: number;
 };
-
-export const DEFAULT_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 
 export const DEFAULT_FUND_FLOW: FundFlowConfig = {
   trancheCents: 250,
@@ -92,27 +92,41 @@ export function nextFundCents(
   return gap >= config.minFundCents ? gap : 0;
 }
 
-/** True when the voucher holds enough uncollected USDC to be worth a claim. */
-export function claimIsDue(voucherAtomic: bigint, claimedAtomic: bigint, config: FundFlowConfig): boolean {
-  return voucherAtomic > claimedAtomic && voucherAtomic - claimedAtomic >= config.claimMinAtomic;
+/**
+ * The running total a claim may collect: what the trip has used, and never
+ * more than the traveler's voucher covers. Claiming this keeps "claimed never
+ * exceeds used", so a close at the used amount is never below what was claimed.
+ */
+export function claimableAtomic(usedAtomic: bigint, voucherAtomic: bigint): bigint {
+  return usedAtomic < voucherAtomic ? usedAtomic : voucherAtomic;
+}
+
+/** True when `claimable` (see `claimableAtomic`) holds enough uncollected USDC to be worth a claim. */
+export function claimIsDue(claimable: bigint, claimedAtomic: bigint, config: FundFlowConfig): boolean {
+  return claimable > claimedAtomic && claimable - claimedAtomic >= config.claimMinAtomic;
 }
 
 export type AutoCloseReason = NonNullable<ProductMission["autoCloseReason"]>;
 
 /**
  * Why the backend should close this trip by itself now, or null to leave it
- * open. `timeoutSeconds` is the escrow's refund timeout.
+ * open. `timeoutSeconds` is the escrow's refund timeout as the contract
+ * reports it, or null when it could not be read: without it (or when the
+ * margin is not smaller than it) a trip is never closed on the timeout. `usedAtomic` is what
+ * the trip has used, the figure a claim and a close settle: the deposit is
+ * spent when the usage reaches it. A voucher alone never decides that, it is
+ * a ceiling the app signs ahead of usage.
  */
 export function autoCloseReason(
   mission: ProductMission,
+  usedAtomic: bigint,
   config: FundFlowConfig,
   now: Date,
-  timeoutSeconds: number,
+  timeoutSeconds: number | null,
 ): AutoCloseReason | null {
   const nowMs = now.getTime();
   const deposit = BigInt(mission.depositAtomic ?? "0");
-  const voucher = BigInt(mission.voucher?.cumulativeAtomic ?? "0");
-  if (deposit > 0n && voucher >= deposit) return "deposit_spent";
+  if (deposit > 0n && usedAtomic >= deposit) return "deposit_spent";
 
   const tripEnd = Date.parse(`${mission.endDate}T00:00:00Z`);
   if (Number.isFinite(tripEnd) && nowMs >= tripEnd + (24 * 60 * 60 + config.tripEndGraceSeconds) * 1000) {
@@ -120,7 +134,12 @@ export function autoCloseReason(
   }
 
   const activeAt = Date.parse(mission.escrowActiveAt ?? "");
-  if (Number.isFinite(activeAt) && nowMs >= activeAt + (timeoutSeconds - config.closeMarginSeconds) * 1000) {
+  if (
+    timeoutSeconds !== null &&
+    timeoutSeconds > config.closeMarginSeconds &&
+    Number.isFinite(activeAt) &&
+    nowMs >= activeAt + (timeoutSeconds - config.closeMarginSeconds) * 1000
+  ) {
     return "timeout_near";
   }
 

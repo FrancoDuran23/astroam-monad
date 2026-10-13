@@ -1,6 +1,6 @@
 import shipSrc from '../assets/ship-night.png'
 
-/** The orbital mission card from the Stellar-era hero: home → Brazil, the ship riding the orbit. */
+/** The orbital mission card from the landing hero: home → Brazil, the ship riding the orbit. */
 export default function MissionOrbitCard() {
   return (
     <div className="w-full max-w-xl bg-cardbg glass rounded-3xl border border-cardborder shadow-[0_0_60px_rgba(123,92,255,0.18)] p-6 sm:p-8 relative overflow-hidden">

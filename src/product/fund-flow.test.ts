@@ -4,6 +4,7 @@ import {
   DEFAULT_FUND_FLOW,
   costCentsPaidBy,
   nextFundCents,
+  claimableAtomic,
   claimIsDue,
   autoCloseReason,
   fundFlowConfigFromEnv,
@@ -40,7 +41,19 @@ test("nextFundCents: one tranche past the voucher, never past what the deposit p
   assert.equal(fund(10_000_000n, 666), 0);
 });
 
-test("claimIsDue: triggers when uncollected voucher amount exceeds threshold", () => {
+test("claimableAtomic: what was used, never more than the voucher covers", () => {
+  // Signed 4 USDC ahead, 1 USDC used: the usage is what can be collected.
+  assert.equal(claimableAtomic(1_000_000n, 4_000_000n), 1_000_000n);
+  // Usage ran past the voucher: only what the traveler signed.
+  assert.equal(claimableAtomic(5_000_000n, 4_000_000n), 4_000_000n);
+  assert.equal(claimableAtomic(4_000_000n, 4_000_000n), 4_000_000n);
+  assert.equal(claimableAtomic(0n, 4_000_000n), 0n);
+  // A large voucher alone makes no claim due: the usage has to be there.
+  assert.equal(claimIsDue(claimableAtomic(1_000_000n, 9_000_000n), 0n, DEFAULT_FUND_FLOW), false);
+  assert.equal(claimIsDue(claimableAtomic(2_000_000n, 9_000_000n), 0n, DEFAULT_FUND_FLOW), true);
+});
+
+test("claimIsDue: triggers when the uncollected claimable amount reaches the threshold", () => {
   const config = DEFAULT_FUND_FLOW; // claimMinAtomic = 2_000_000n (2 USDC)
   assert.equal(claimIsDue(1_000_000n, 0n, config), false);
   assert.equal(claimIsDue(2_000_000n, 0n, config), true);
@@ -85,14 +98,20 @@ test("autoCloseReason: evaluates closing triggers", () => {
     ...baseMission,
     voucher: { cumulativeAtomic: "10000000", signature: "0x...", signedAt: "2026-10-05T00:00:00Z" },
   };
-  assert.equal(autoCloseReason(spentMission, config, now, timeoutSeconds), "deposit_spent");
+  assert.equal(autoCloseReason(spentMission, 10_000_000n, config, now, timeoutSeconds), "deposit_spent");
+  // A voucher equal to the deposit is a ceiling, not usage: with the deposit not yet used the trip stays open.
+  const ongoing = { ...spentMission, endDate: "2026-10-25" };
+  assert.equal(autoCloseReason(ongoing, 3_000_000n, config, now, timeoutSeconds), null);
+  assert.equal(autoCloseReason(ongoing, 9_999_999n, config, now, timeoutSeconds), null);
+  // Usage that reached the deposit closes it, with or without a voucher on the mission.
+  assert.equal(autoCloseReason(baseMission, 10_000_000n, config, now, timeoutSeconds), "deposit_spent");
 
   // 2. trip_ended: endDate + grace period (24h + 24h grace)
   const endedMission: ProductMission = {
     ...baseMission,
     endDate: "2026-10-07", // ended 3 days ago relative to now (Oct 10)
   };
-  assert.equal(autoCloseReason(endedMission, config, now, timeoutSeconds), "trip_ended");
+  assert.equal(autoCloseReason(endedMission, 0n, config, now, timeoutSeconds), "trip_ended");
 
   // 3. timeout_near: activeAt + timeout - margin
   const timeoutNearMission: ProductMission = {
@@ -100,7 +119,7 @@ test("autoCloseReason: evaluates closing triggers", () => {
     endDate: "2026-10-25", // trip still in progress
     escrowActiveAt: "2026-09-10T12:00:00Z", // 30 days ago
   };
-  assert.equal(autoCloseReason(timeoutNearMission, config, now, timeoutSeconds), "timeout_near");
+  assert.equal(autoCloseReason(timeoutNearMission, 0n, config, now, timeoutSeconds), "timeout_near");
 
   // 4. idle close
   const idleConfig = { ...config, idleCloseSeconds: 3600 }; // 1h
@@ -109,14 +128,14 @@ test("autoCloseReason: evaluates closing triggers", () => {
     endDate: "2026-10-25",
     lastUsageAt: "2026-10-10T10:00:00Z", // 2 hours ago
   };
-  assert.equal(autoCloseReason(idleMission, idleConfig, now, timeoutSeconds), "idle");
+  assert.equal(autoCloseReason(idleMission, 0n, idleConfig, now, timeoutSeconds), "idle");
 
   // 5. No trigger: returns null
   const healthyMission: ProductMission = {
     ...baseMission,
     endDate: "2026-10-15",
   };
-  assert.equal(autoCloseReason(healthyMission, config, now, timeoutSeconds), null);
+  assert.equal(autoCloseReason(healthyMission, 0n, config, now, timeoutSeconds), null);
 });
 
 test("fundFlowConfigFromEnv parses environment variables properly", () => {

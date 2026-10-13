@@ -110,6 +110,13 @@ export type ProductMission = {
   settledUsdc?: number
   /** Returned to the traveler when the channel closed, in USDC. */
   refundedUsdc?: number
+  /**
+   * Set only for a trip that closed with more collected than it metered: by
+   * how much, in USDC atomic units. Claims are bounded by usage, so this
+   * marks an inconsistency found at close (and owed to the traveler), never
+   * a normal trip.
+   */
+  closedAboveUsageAtomic?: string
   createdAt: string
   updatedAt: string
 }

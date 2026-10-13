@@ -1,6 +1,9 @@
-// Deploy AstroAmEscrow to Monad testnet. Prints the address the receipt
-// returns. If there is no key, it prints the exact commands a human must run
-// and exits. It never invents a contract address.
+// Deploy AstroAmEscrow v4 to Monad testnet. It builds the contract first,
+// refuses to deploy with the payee and the operator being the same account,
+// checks the chain, the deployer's gas and the USDC token before sending, and
+// reads the contract back afterwards. With MONAD_ESCROW_ADDRESS already set it
+// only verifies that contract against the environment (--force deploys anyway).
+// It never prints a private key and never invents a contract address.
 import "dotenv/config";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -10,8 +13,11 @@ import {
   createPublicClient,
   createWalletClient,
   defineChain,
+  getAddress,
   http,
   isAddress,
+  parseAbi,
+  type Address,
   type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -24,127 +30,246 @@ import {
   MONAD_RPC_URL,
   MONAD_USDC_ADDRESS,
 } from "../src/shared/monad/constants.ts";
+import { deployBlockers, escrowConfigMismatches } from "../src/shared/monad/preflight.ts";
 
 const ARTIFACT = join("contracts", "out", "AstroAmEscrow.sol", "AstroAmEscrow.json");
+const env = process.env;
+const args = new Set(process.argv.slice(2));
+const allowSameKey = args.has("--allow-same-key");
+const force = args.has("--force");
 
 function foundryBin(name: string): string | undefined {
-  const fromPath = (process.env.PATH ?? "")
+  const fromPath = (env.PATH ?? "")
     .split(":")
     .map((dir) => join(dir, name))
     .find((path) => existsSync(path));
   if (fromPath) return fromPath;
-  const home = process.env.HOME ?? "";
+  const home = env.HOME ?? "";
   return [join(home, ".foundry", "bin", name), join(home, ".config", ".foundry", "bin", name)].find((path) => existsSync(path));
 }
 
-function humanSteps(): string {
+function usage(): string {
   return [
-    "No Monad deployment was sent. There is no deployer key in this environment, and this script will not invent a contract address.",
+    "Deploys AstroAmEscrow v4 to Monad testnet (chain id 10143). Nothing was sent.",
     "",
-    "A human deploys AstroAmEscrow to Monad testnet (chain id 10143) like this:",
+    "  1. Install Foundry: curl -L https://foundry.paradigm.xyz | bash && foundryup",
+    "  2. Get testnet MON for the deployer: https://faucet.monad.xyz",
+    "  3. Export these in the shell (do not write the deployer key into .env):",
+    "       export MONAD_DEPLOYER_PRIVATE_KEY=0x...   # pays gas for the deploy only",
+    "       export MONAD_PAYEE_ADDRESS=0x...          # where the USDC goes: a cold wallet or multisig",
+    "       export MONAD_OPERATOR_ADDRESS=0x...       # the address of the server key (MONAD_OPERATOR_PRIVATE_KEY)",
+    "     Optional: MONAD_TIMEOUT_SECONDS (refund window, default 2592000 = 30 days),",
+    "     MONAD_RPC_URL, MONAD_CHAIN_ID, MONAD_USDC_ADDRESS, MONAD_EXPLORER_URL.",
+    "  4. From the repo root: npm run monad:deploy",
+    "  5. Paste the lines it prints into .env and restart the API. Do not paste an address it did not print.",
     "",
-    "  1. Install Foundry: https://book.getfoundry.sh/getting-started/installation",
-    "     curl -L https://foundry.paradigm.xyz | bash && foundryup",
-    "  2. Get testnet MON for gas: https://faucet.monad.xyz",
-    "  3. Get Circle test USDC (Monad Testnet) for the traveler wallet: https://faucet.circle.com",
-    "  4. Export the deployer key. By default the deployer is also the payee: the",
-    "     account that receives used USDC and the only one allowed to close an",
-    "     escrow, so the API needs its key as MONAD_PAYEE_PRIVATE_KEY:",
-    "       export MONAD_DEPLOYER_PRIVATE_KEY=0x...",
-    "     Optional: export MONAD_PAYEE_ADDRESS=0x... (a different payee)",
-    "     Optional: export MONAD_TIMEOUT_SECONDS=2592000 (refund window, default 30 days)",
-    "  5. From the repo root:",
-    "       npm run monad:deploy",
-    "  6. Copy the printed lines into .env (PAYMENT_RAIL=monad, MONAD_ESCROW_ADDRESS,",
-    "     MONAD_PAYEE_PRIVATE_KEY = the payee's key) and restart the API.",
-    "     Do not paste an address this script did not print.",
-    "",
-    `USDC (verified, 6 decimals): ${MONAD_USDC_ADDRESS}`,
-    `RPC: ${MONAD_RPC_URL}`,
+    "Flags: --allow-same-key (payee = operator, local testing only), --force (deploy even if MONAD_ESCROW_ADDRESS is set).",
+    "With MONAD_ESCROW_ADDRESS set it does not deploy: it checks that contract against these values.",
   ].join("\n");
+}
+
+function stop(lines: string[], showUsage = false): never {
+  for (const line of lines) console.error(line);
+  if (showUsage) console.error(`\n${usage()}`);
+  process.exit(1);
+}
+
+function oneLine(error: unknown): string {
+  const text = error instanceof Error ? ((error as { shortMessage?: string }).shortMessage ?? error.message) : String(error);
+  return text.split("\n")[0].slice(0, 200);
 }
 
 function forgeBuild(): Promise<void> {
   const forge = foundryBin("forge");
-  if (!forge) return Promise.reject(new Error("forge is not installed"));
+  if (!forge) return Promise.reject(new Error("forge is not installed: curl -L https://foundry.paradigm.xyz | bash && foundryup"));
   return new Promise((resolve, reject) => {
     const child = spawn(forge, ["build", "--root", "contracts"], { stdio: "inherit" });
-    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`forge build exited ${code}`))));
+    child.on("error", (error) => reject(error));
+    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`forge build failed (exit ${code}): fix the contract errors above`))));
   });
 }
 
-const key = (process.env.MONAD_DEPLOYER_PRIVATE_KEY || process.env.MONAD_PAYEE_PRIVATE_KEY)?.trim();
-if (!key) {
-  console.error(humanSteps());
-  process.exit(1);
-}
-if (!/^0x[0-9a-fA-F]{64}$/.test(key)) {
-  console.error("MONAD_DEPLOYER_PRIVATE_KEY must be a 32-byte hex private key (0x + 64 hex chars).");
-  process.exit(1);
-}
+// --- read and validate the environment (no network yet) --------------------
 
-const account = privateKeyToAccount(key as Hex);
-const payeeRaw = process.env.MONAD_PAYEE_ADDRESS?.trim() || account.address;
-if (!isAddress(payeeRaw)) {
-  console.error(`MONAD_PAYEE_ADDRESS is not an address: ${payeeRaw}`);
-  process.exit(1);
-}
-const timeoutRaw = process.env.MONAD_TIMEOUT_SECONDS?.trim();
-const timeout = timeoutRaw ? Number(timeoutRaw) : DEFAULT_ESCROW_TIMEOUT_SECONDS;
-if (!Number.isInteger(timeout) || timeout <= 0) {
-  console.error("MONAD_TIMEOUT_SECONDS must be a positive integer (seconds).");
-  process.exit(1);
-}
-
-if (!existsSync(ARTIFACT)) {
-  await forgeBuild();
-}
-const compiled = JSON.parse(await readFile(ARTIFACT, "utf8")) as {
-  bytecode: { object: Hex };
-  abi: { type: string; name?: string }[];
+const problems: string[] = [];
+const addressVar = (name: string): Address | undefined => {
+  const raw = env[name]?.trim();
+  if (!raw) {
+    problems.push(`${name} is not set: ${hint(name)}`);
+    return undefined;
+  }
+  if (!isAddress(raw)) {
+    problems.push(`${name} is not an address: ${raw}`);
+    return undefined;
+  }
+  return getAddress(raw);
 };
-if (!compiled.bytecode?.object || compiled.bytecode.object === "0x") {
-  console.error(`Artifact ${ARTIFACT} has no bytecode. Run: forge build --root contracts`);
-  process.exit(1);
+function hint(name: string): string {
+  if (name === "MONAD_PAYEE_ADDRESS") return "export the address that should receive the USDC (cold wallet or multisig)";
+  return "export the address of the server key (MONAD_OPERATOR_PRIVATE_KEY)";
 }
-if (!compiled.abi?.some((item) => item.type === "function" && item.name === "claim")) {
-  console.error(`Artifact ${ARTIFACT} is stale (no claim function). Rebuild it: forge build --root contracts`);
-  process.exit(1);
+
+const payee = addressVar("MONAD_PAYEE_ADDRESS");
+const operator = addressVar("MONAD_OPERATOR_ADDRESS");
+
+const usdcRaw = env.MONAD_USDC_ADDRESS?.trim() || MONAD_USDC_ADDRESS;
+if (!isAddress(usdcRaw)) problems.push(`MONAD_USDC_ADDRESS is not an address: ${usdcRaw}`);
+const usdc = isAddress(usdcRaw) ? getAddress(usdcRaw) : undefined;
+
+const rpcUrl = env.MONAD_RPC_URL?.trim() || MONAD_RPC_URL;
+const chainIdRaw = env.MONAD_CHAIN_ID?.trim();
+const chainId = chainIdRaw ? Number(chainIdRaw) : MONAD_CHAIN_ID;
+if (!Number.isInteger(chainId) || chainId <= 0) problems.push(`MONAD_CHAIN_ID is not a positive integer: ${chainIdRaw}`);
+const explorer = env.MONAD_EXPLORER_URL?.trim() || MONAD_EXPLORER;
+
+const timeoutRaw = env.MONAD_TIMEOUT_SECONDS?.trim();
+const timeout = timeoutRaw ? Number(timeoutRaw) : DEFAULT_ESCROW_TIMEOUT_SECONDS;
+if (!Number.isInteger(timeout) || timeout <= 0) problems.push("MONAD_TIMEOUT_SECONDS must be a positive integer (seconds)");
+
+const existingRaw = env.MONAD_ESCROW_ADDRESS?.trim();
+if (existingRaw && !isAddress(existingRaw)) problems.push(`MONAD_ESCROW_ADDRESS is not an address: ${existingRaw}`);
+const verifyOnly = Boolean(existingRaw) && !force;
+
+const deployerKey = env.MONAD_DEPLOYER_PRIVATE_KEY?.trim();
+if (!verifyOnly) {
+  if (!deployerKey) problems.push("MONAD_DEPLOYER_PRIVATE_KEY is not set: export the key that pays gas for the deploy");
+  else if (!/^0x[0-9a-fA-F]{64}$/.test(deployerKey)) problems.push("MONAD_DEPLOYER_PRIVATE_KEY must be a 32-byte hex private key (0x + 64 hex chars)");
+}
+if (payee && operator && payee === operator && !allowSameKey && !verifyOnly) {
+  problems.push(
+    "MONAD_PAYEE_ADDRESS and MONAD_OPERATOR_ADDRESS are the same account. The point of v4 is keeping them apart, so a stolen server key cannot take the funds: use a different payee, or pass --allow-same-key for local testing",
+  );
+}
+
+if (problems.length > 0) {
+  const missingAll = !payee && !operator && !deployerKey && !existingRaw;
+  stop(problems.map((p) => `ERROR ${p}`), missingAll || problems.some((p) => p.includes("is not set")));
 }
 
 const chain = defineChain({
-  id: MONAD_CHAIN_ID,
+  id: chainId,
   name: MONAD_CHAIN_NAME,
   nativeCurrency: { name: "Monad", symbol: "MON", decimals: 18 },
-  rpcUrls: { default: { http: [MONAD_RPC_URL] } },
-  blockExplorers: { default: { name: "MonadVision", url: MONAD_EXPLORER } },
+  rpcUrls: { default: { http: [rpcUrl] } },
+  blockExplorers: { default: { name: "MonadVision", url: explorer } },
 });
+const publicClient = createPublicClient({ chain, transport: http(rpcUrl) });
+const expected = {
+  usdc: usdc as Address,
+  payee: payee as Address,
+  operator: operator as Address,
+  timeoutSeconds: timeoutRaw ? BigInt(timeout) : undefined,
+};
 
-const publicClient = createPublicClient({ chain, transport: http(MONAD_RPC_URL) });
-const wallet = createWalletClient({ account, chain, transport: http(MONAD_RPC_URL) });
-
-console.log(`Deployer: ${account.address}`);
-console.log(`Payee:    ${payeeRaw}`);
-console.log(`USDC:     ${MONAD_USDC_ADDRESS}`);
-console.log(`Timeout:  ${timeout} seconds`);
-
-const hash = await wallet.deployContract({
-  abi: astroAmEscrowAbi,
-  bytecode: compiled.bytecode.object,
-  args: [MONAD_USDC_ADDRESS, payeeRaw, BigInt(timeout)],
-});
-console.log(`Deploy tx: ${MONAD_EXPLORER}/tx/${hash}`);
-const receipt = await publicClient.waitForTransactionReceipt({ hash });
-if (receipt.status !== "success" || !receipt.contractAddress) {
-  console.error("Deployment transaction did not return a contract address.");
-  process.exit(1);
+async function readConfig(address: Address) {
+  const read = (functionName: "usdc" | "payee" | "operator" | "timeoutSeconds") =>
+    publicClient.readContract({ address, abi: astroAmEscrowAbi, functionName });
+  const [u, p, o, t] = await Promise.all([read("usdc"), read("payee"), read("operator"), read("timeoutSeconds")]);
+  return { usdc: u as string, payee: p as string, operator: o as string, timeoutSeconds: BigInt(t as bigint) };
 }
-console.log("");
-console.log("PAYMENT_RAIL=monad");
-console.log(`MONAD_ESCROW_ADDRESS=${receipt.contractAddress}`);
-if (payeeRaw.toLowerCase() === account.address.toLowerCase()) {
-  console.log("MONAD_PAYEE_PRIVATE_KEY=<the deployer key you used>");
-} else {
-  console.log(`MONAD_PAYEE_PRIVATE_KEY=<the key of ${payeeRaw}>`);
+
+function printEnvLines(address: string): void {
+  console.log("");
+  console.log("Paste these into .env (the address comes from the chain, not a placeholder):");
+  console.log("PAYMENT_RAIL=monad");
+  console.log(`MONAD_ESCROW_ADDRESS=${address}`);
+  console.log("MONAD_OPERATOR_PRIVATE_KEY=<the key of " + `${expected.operator}>`);
+  if (rpcUrl !== MONAD_RPC_URL) console.log(`MONAD_RPC_URL=${rpcUrl}`);
+  if (chainId !== MONAD_CHAIN_ID) console.log(`MONAD_CHAIN_ID=${chainId}`);
+  if (expected.usdc !== getAddress(MONAD_USDC_ADDRESS)) console.log(`MONAD_USDC_ADDRESS=${expected.usdc}`);
+  console.log(`Explorer: ${explorer}/address/${address}`);
+  console.log("Next: npm run real:check");
 }
-console.log("Add those lines to .env and restart the API. The address comes from the receipt, not a placeholder.");
+
+try {
+  // --- an escrow is already configured: verify it, do not deploy ----------
+  if (verifyOnly) {
+    const address = getAddress(existingRaw as string);
+    console.log(`MONAD_ESCROW_ADDRESS is already set (${address}); not deploying. Pass --force to deploy a new one.`);
+    const code = await publicClient.getCode({ address });
+    if (!code || code === "0x") stop([`ERROR no contract at ${address} on chain ${chainId}: check MONAD_ESCROW_ADDRESS and MONAD_RPC_URL`]);
+    let actual;
+    try {
+      actual = await readConfig(address);
+    } catch {
+      stop([`ERROR ${address} does not answer usdc(), payee(), operator() and timeoutSeconds(): it is not an escrow v4`]);
+    }
+    console.log(`  usdc()           ${actual.usdc}`);
+    console.log(`  payee()          ${actual.payee}`);
+    console.log(`  operator()       ${actual.operator}`);
+    console.log(`  timeoutSeconds() ${actual.timeoutSeconds}`);
+    const mismatches = escrowConfigMismatches(expected, actual);
+    if (mismatches.length > 0) {
+      stop([...mismatches.map((m) => `MISMATCH ${m}`), "ERROR this escrow does not match your environment: fix the variables, or pass --force to deploy a new escrow"]);
+    }
+    console.log("OK this escrow matches MONAD_USDC_ADDRESS, MONAD_PAYEE_ADDRESS and MONAD_OPERATOR_ADDRESS.");
+    printEnvLines(address);
+    process.exit(0);
+  }
+
+  // --- deploy --------------------------------------------------------------
+  await forgeBuild();
+  if (!existsSync(ARTIFACT)) stop([`ERROR forge build produced no ${ARTIFACT}`]);
+  const compiled = JSON.parse(await readFile(ARTIFACT, "utf8")) as {
+    bytecode: { object: Hex };
+    abi: { type: string; name?: string; inputs?: unknown[] }[];
+  };
+  const ctor = compiled.abi?.find((item) => item.type === "constructor");
+  if (!compiled.bytecode?.object || compiled.bytecode.object === "0x") stop([`ERROR ${ARTIFACT} has no bytecode: run forge build --root contracts`]);
+  if (ctor?.inputs?.length !== 4) stop([`ERROR ${ARTIFACT} is not escrow v4 (constructor takes ${ctor?.inputs?.length ?? 0} arguments, v4 takes 4): check out the v4 contract and rebuild`]);
+
+  const account = privateKeyToAccount(deployerKey as Hex);
+  console.log(`Deployer: ${account.address}`);
+  console.log(`Payee:    ${expected.payee}`);
+  console.log(`Operator: ${expected.operator}`);
+  console.log(`USDC:     ${expected.usdc}`);
+  console.log(`Timeout:  ${timeout} seconds`);
+  console.log(`RPC:      ${rpcUrl} (chain ${chainId})`);
+
+  const erc20 = parseAbi(["function decimals() view returns (uint8)"]);
+  const [rpcChainId, deployerBalanceWei, usdcCode] = await Promise.all([
+    publicClient.getChainId(),
+    publicClient.getBalance({ address: account.address }),
+    publicClient.getCode({ address: expected.usdc }),
+  ]);
+  const usdcHasCode = Boolean(usdcCode && usdcCode !== "0x");
+  let usdcDecimals: number | undefined;
+  if (usdcHasCode) {
+    try {
+      usdcDecimals = Number(await publicClient.readContract({ address: expected.usdc, abi: erc20, functionName: "decimals" }));
+    } catch {
+      usdcDecimals = undefined;
+    }
+  }
+  const blockers = deployBlockers(
+    { rpcChainId, expectedChainId: chainId, deployerBalanceWei, usdcHasCode, usdcDecimals },
+    rpcUrl,
+    expected.usdc,
+    account.address,
+  );
+  if (blockers.length > 0) stop(blockers.map((b) => `ERROR ${b}`));
+
+  const wallet = createWalletClient({ account, chain, transport: http(rpcUrl) });
+  const hash = await wallet.deployContract({
+    abi: astroAmEscrowAbi,
+    bytecode: compiled.bytecode.object,
+    args: [expected.usdc, expected.payee, expected.operator, BigInt(timeout)],
+  });
+  console.log(`Deploy tx: ${explorer}/tx/${hash}`);
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success" || !receipt.contractAddress) {
+    stop(["ERROR the deployment transaction did not return a contract address: open the transaction above to see why"]);
+  }
+  const address = getAddress(receipt.contractAddress as string);
+
+  const actual = await readConfig(address);
+  const mismatches = escrowConfigMismatches({ ...expected, timeoutSeconds: BigInt(timeout) }, actual);
+  if (mismatches.length > 0) {
+    stop([...mismatches.map((m) => `MISMATCH ${m}`), `ERROR the contract at ${address} does not hold the configuration that was sent: do not use it`]);
+  }
+  console.log(`Verified on chain: usdc(), payee(), operator() and timeoutSeconds() match (${actual.timeoutSeconds} seconds).`);
+  if (expected.payee === expected.operator) console.log("WARNING payee and operator are the same account (--allow-same-key): local testing only.");
+  printEnvLines(address);
+} catch (error) {
+  stop([`ERROR ${oneLine(error)}`, "Check MONAD_RPC_URL and the variables above, then run again. Nothing is recorded until the address is printed."]);
+}

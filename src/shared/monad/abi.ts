@@ -1,5 +1,7 @@
-// Generated from contracts/out (forge build --root contracts). Do not edit by hand:
-// regenerate after changing contracts/src/AstroAmEscrow.sol.
+// `astroAmEscrowAbi` is generated from contracts/out. Do not edit it by hand:
+// after changing contracts/src/AstroAmEscrow.sol run
+//   npm run contracts:build && npm run contracts:abi
+// abi.test.ts fails when it differs from the build output.
 
 export const astroAmEscrowAbi = [
   {
@@ -12,6 +14,11 @@ export const astroAmEscrowAbi = [
       },
       {
         "name": "payee_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "operator_",
         "type": "address",
         "internalType": "address"
       },
@@ -67,6 +74,11 @@ export const astroAmEscrowAbi = [
         "name": "signature",
         "type": "bytes",
         "internalType": "bytes"
+      },
+      {
+        "name": "claimTotal",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -174,6 +186,19 @@ export const astroAmEscrowAbi = [
   },
   {
     "type": "function",
+    "name": "operator",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "payee",
     "inputs": [],
     "outputs": [
@@ -193,6 +218,19 @@ export const astroAmEscrowAbi = [
         "name": "escrowId",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setOperator",
+    "inputs": [
+      {
+        "name": "operator_",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -368,6 +406,25 @@ export const astroAmEscrowAbi = [
   },
   {
     "type": "event",
+    "name": "OperatorChanged",
+    "inputs": [
+      {
+        "name": "previous",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "current",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Refunded",
     "inputs": [
       {
@@ -433,12 +490,22 @@ export const astroAmEscrowAbi = [
   },
   {
     "type": "error",
+    "name": "ClaimExceedsVoucher",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EscrowExists",
     "inputs": []
   },
   {
     "type": "error",
     "name": "EscrowMissing",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotOperator",
     "inputs": []
   },
   {
@@ -493,6 +560,7 @@ export const astroAmEscrowAbi = [
   }
 ] as const;
 
+// Written by hand; the generator does not touch it.
 export const erc20Abi = [
   { type: "function", name: "approve", stateMutability: "nonpayable", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ name: "", type: "bool" }] },
   { type: "function", name: "allowance", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ name: "", type: "uint256" }] },

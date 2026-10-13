@@ -28,6 +28,7 @@ import {
 } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import type { EvmDepositPlan } from '../types/mission'
+import { classifyRefundError, refundAvailability, RefundFailure, refundFailureMessage, type EscrowSnapshot, type RefundAvailability } from '../utils/refundWindow.ts'
 
 const erc20Abi = [
   {
@@ -80,6 +81,35 @@ const escrowAbi = [
       { name: 'amount', type: 'uint256' },
     ],
     outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'refund',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'escrowId', type: 'bytes32' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'timeoutSeconds',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'escrows',
+    stateMutability: 'view',
+    inputs: [{ name: '', type: 'bytes32' }],
+    outputs: [
+      { name: 'traveler', type: 'address' },
+      { name: 'openedAt', type: 'uint64' },
+      { name: 'settled', type: 'bool' },
+      { name: 'signer', type: 'address' },
+      { name: 'deposit', type: 'uint256' },
+      { name: 'claimed', type: 'uint256' },
+      { name: 'lastActivityAt', type: 'uint64' },
+    ],
   },
 ] as const
 
@@ -175,6 +205,9 @@ type SessionRecord = {
   traveler?: Address
   token?: Address
   rpcUrl?: string
+  /** Kept so the refund after the timeout can reach the chain from a reloaded page. */
+  chainName?: string
+  explorer?: string
 }
 
 export const sessionStorageKey = (missionId: string) => `astroam_session_${missionId}`
@@ -262,7 +295,7 @@ export async function sendDeposit(
   const { wallet, reader, chain, account } = await connect(plan)
   const token = getAddress(plan.token)
   const contract = getAddress(plan.contract)
-  saveSession(missionId, { ...sessionFor(missionId, plan), traveler: account, token, rpcUrl: plan.rpcUrl })
+  saveSession(missionId, { ...sessionFor(missionId, plan), traveler: account, token, rpcUrl: plan.rpcUrl, chainName: plan.chainName, explorer: plan.explorer })
   const amount = BigInt(plan.amountAtomic)
 
   // Every transaction here pays gas in MON: say so before MetaMask shows a
@@ -346,5 +379,166 @@ export function recordAuthorization(missionId: string, cumulativeAmount: string)
   if (!session) return
   if (BigInt(cumulativeAmount) > BigInt(session.authorizedAtomic)) {
     saveSession(missionId, { ...session, authorizedAtomic: cumulativeAmount })
+  }
+}
+
+// ── Refund after the timeout ─────────────────────────────────────────────────
+//
+// `refund(escrowId)` is callable by anyone once `timeoutSeconds` have passed
+// since the escrow's last deposit, top-up or claim; the funds always go to the
+// escrow's traveler. Everything needed to reach the chain comes from the
+// session record this browser saved at deposit time (contract, chain, RPC,
+// escrow id, token), so it survives a reload of the trip screen.
+
+export type RefundTarget = {
+  escrowId: Hex
+  contract: Address
+  chainId: number
+  chainName: string
+  rpcUrl: string
+  explorer: string
+  token: Address
+  tokenDecimals: number
+}
+
+const DEFAULT_EXPLORER = 'https://testnet.monadvision.com'
+
+/** Where to read and refund this trip's escrow; null when this browser never made the deposit. */
+export function loadRefundTarget(missionId: string): RefundTarget | null {
+  const s = loadSession(missionId)
+  if (!s || !s.escrowId || !s.contract || !s.rpcUrl || !s.token) return null
+  return {
+    escrowId: s.escrowId,
+    contract: s.contract,
+    chainId: s.chainId,
+    chainName: s.chainName ?? 'Monad Testnet',
+    rpcUrl: s.rpcUrl,
+    explorer: s.explorer || DEFAULT_EXPLORER,
+    token: s.token,
+    tokenDecimals: s.tokenDecimals,
+  }
+}
+
+function targetPlan(target: RefundTarget): EvmDepositPlan {
+  return {
+    kind: 'evm',
+    chainId: target.chainId,
+    chainName: target.chainName,
+    rpcUrl: target.rpcUrl,
+    explorer: target.explorer,
+    token: target.token,
+    tokenDecimals: target.tokenDecimals,
+    contract: target.contract,
+    escrowId: target.escrowId,
+    amountAtomic: '0',
+    method: 'deposit',
+  }
+}
+
+export type RefundStatus = {
+  escrow: EscrowSnapshot
+  /** Chain time (latest block) minus the browser clock, in seconds, at the moment of the read. */
+  clockOffsetSeconds: number
+  availability: RefundAvailability
+}
+
+/** Reads the escrow, the contract's timeout and the chain's clock. */
+export async function readRefundStatus(target: RefundTarget): Promise<RefundStatus> {
+  const reader = createPublicClient({ transport: http(target.rpcUrl) })
+  const [row, timeoutSeconds, block] = await Promise.all([
+    reader.readContract({ address: target.contract, abi: escrowAbi, functionName: 'escrows', args: [target.escrowId] }),
+    reader.readContract({ address: target.contract, abi: escrowAbi, functionName: 'timeoutSeconds' }),
+    reader.getBlock(),
+  ])
+  const escrow: EscrowSnapshot = {
+    traveler: row[0],
+    settled: row[2],
+    deposit: row[4],
+    claimed: row[5],
+    lastActivityAt: BigInt(row[6]),
+    timeoutSeconds,
+  }
+  const chainNow = Number(block.timestamp)
+  return { escrow, clockOffsetSeconds: chainNow - Math.floor(Date.now() / 1000), availability: refundAvailability(escrow, chainNow) }
+}
+
+export async function readUsdcOf(target: RefundTarget, address: Address): Promise<number> {
+  const reader = createPublicClient({ transport: http(target.rpcUrl) })
+  const raw = await reader.readContract({ address: target.token, abi: erc20Abi, functionName: 'balanceOf', args: [address] })
+  return Number(raw) / 10 ** target.tokenDecimals
+}
+
+export type RefundProgress = 'connecting' | 'confirming-wallet' | 'confirming'
+
+export type RefundOutcome = {
+  txHash: Hex
+  explorerUrl: string
+  /** Escrow's traveler: where the funds went, whoever sent the transaction. */
+  traveler: Address
+  /** The wallet that sent the transaction. */
+  sender: Address
+  refundedUsdc: number
+  beforeUsdc: number
+  afterUsdc: number
+}
+
+/**
+ * Simulates, then sends `refund(escrowId)` from the connected wallet and waits
+ * for the receipt. Throws a RefundFailure with a specific kind.
+ */
+export async function refundEscrow(
+  target: RefundTarget,
+  hooks?: { onProgress?: (step: RefundProgress) => void; onConnected?: (account: Address) => void },
+): Promise<RefundOutcome> {
+  try {
+    hooks?.onProgress?.('connecting')
+    const { wallet, reader, account } = await connect(targetPlan(target))
+    hooks?.onConnected?.(account)
+
+    // Read first: a refund that is not due, or not needed, must not reach the wallet.
+    const status = await readRefundStatus(target)
+    const a = status.availability
+    if (a.kind === 'not-yet') throw new RefundFailure('timeout', refundFailureMessage('timeout', { chainName: target.chainName, availableAt: a.availableAt }))
+    if (a.kind === 'settled') throw new RefundFailure('settled', refundFailureMessage('settled', { chainName: target.chainName }))
+    if (a.kind === 'missing') throw new RefundFailure('missing', refundFailureMessage('missing', { chainName: target.chainName }))
+    const traveler = getAddress(status.escrow.traveler)
+
+    if ((await reader.getBalance({ address: account })) === 0n) {
+      throw new RefundFailure('no-gas', refundFailureMessage('no-gas', { chainName: target.chainName }))
+    }
+
+    const beforeUsdc = await readUsdcOf(target, traveler)
+    const { request } = await reader.simulateContract({
+      account,
+      address: target.contract,
+      abi: escrowAbi,
+      functionName: 'refund',
+      args: [target.escrowId],
+    })
+    hooks?.onProgress?.('confirming-wallet')
+    const txHash = await wallet.writeContract(request)
+    hooks?.onProgress?.('confirming')
+    const receipt = await reader.waitForTransactionReceipt({ hash: txHash })
+    if (receipt.status !== 'success') throw new Error('The refund transaction reverted.')
+
+    // The RPC can lag a block behind the receipt: read once more if nothing moved yet.
+    let afterUsdc = await readUsdcOf(target, traveler)
+    if (afterUsdc <= beforeUsdc && a.kind === 'available' && a.amountAtomic > 0n) {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      afterUsdc = await readUsdcOf(target, traveler)
+    }
+    return {
+      txHash,
+      explorerUrl: `${target.explorer}/tx/${txHash}`,
+      traveler,
+      sender: account,
+      refundedUsdc: a.kind === 'available' ? Number(a.amountAtomic) / 10 ** target.tokenDecimals : 0,
+      beforeUsdc,
+      afterUsdc,
+    }
+  } catch (error) {
+    if (error instanceof RefundFailure) throw error
+    const kind = classifyRefundError(error)
+    throw new RefundFailure(kind, refundFailureMessage(kind, { chainName: target.chainName, fallback: walletError(error) }))
   }
 }

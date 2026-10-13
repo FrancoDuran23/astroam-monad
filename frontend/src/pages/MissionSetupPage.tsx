@@ -8,7 +8,9 @@ import StepBudget from '../components/mission/StepBudget'
 import StepConfirm from '../components/mission/StepConfirm'
 import ActivationOverlay from '../components/mission/ActivationOverlay'
 import WalletDeposit from '../components/mission/WalletDeposit'
+import PaymentsUnavailable from '../components/mission/PaymentsUnavailable'
 import { useMission } from '../hooks/useMission'
+import { paymentMode } from '../utils/paymentMode'
 import { addDays, shortTx, today } from '../utils/missionUtils'
 import type { CancelResult, PaymentIntentInfo, WizardData, WizardStep } from '../types/mission'
 
@@ -38,8 +40,6 @@ export default function MissionSetupPage() {
 
   // API payment flow state
   const [paymentIntent, setPaymentIntent] = useState<PaymentIntentInfo | null>(null)
-  const [txHashInput, setTxHashInput] = useState('')
-  const [paymentValidating, setPaymentValidating] = useState(false)
 
   // A trip whose deposit went through but was never activated (the page was closed
   // or the eSIM failed): its USDC sits in the escrow until the trip is activated or cancelled.
@@ -48,7 +48,8 @@ export default function MissionSetupPage() {
   const stalledTrip =
     !isDemoMode && !paymentIntent && !activating && !preparing && mission?.status === 'paid' && !mission.iccid ? mission : null
 
-  const simulated = isDemoMode || !caps?.paymentsLive
+  const mode = paymentMode(isDemoMode, caps, paymentIntent)
+  const simulated = mode === 'simulated'
   const networkLabel = simulated ? 'Simulated payments' : (caps?.paymentRail ?? 'Monad Testnet')
 
   function update(field: string, value: unknown) {
@@ -84,6 +85,7 @@ export default function MissionSetupPage() {
         await createMission(data)
       } else {
         if (!caps || !caps.backendAvailable) throw new Error('The AstroAm server is not reachable. Check the connection and try again.')
+        if (paymentMode(false, caps) === 'blocked') throw new Error('Payments are not available right now. Nothing was charged.')
         const created = await createMission(data)
         setPaymentIntent(await createPaymentIntent(created))
       }
@@ -92,25 +94,6 @@ export default function MissionSetupPage() {
       setError(e instanceof Error ? e.message : 'Could not create the mission')
     } finally {
       setPreparing(false)
-    }
-  }
-
-  async function handleConfirmPaymentSubmit() {
-    if (!paymentIntent) return
-    setError(null)
-    setPaymentValidating(true)
-    try {
-      const txHash = txHashInput.trim() || `0x${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`
-      const res = await confirmPayment(paymentIntent.intentId, txHash)
-      if (!res.valid) throw new Error('The deposit was not accepted.')
-      setPaymentIntent(null)
-      setActivating(true)
-      await activate()
-    } catch (e) {
-      setActivating(false)
-      setError(e instanceof Error ? e.message : 'Could not confirm the deposit')
-    } finally {
-      setPaymentValidating(false)
     }
   }
 
@@ -290,58 +273,17 @@ export default function MissionSetupPage() {
               )}
             </div>
 
-            {paymentIntent.evm && !simulated ? (
-              <WalletDeposit
-                missionId={mission?.id ?? ''}
-                plan={paymentIntent.evm}
-                onDeposited={handleWalletDeposit}
-                label={`Pay ${paymentIntent.amount} USDC with wallet`}
-              />
+            {mode === 'blocked' ? (
+              <PaymentsUnavailable />
             ) : (
-              <>
-                <div className="flex flex-col items-center gap-6">
-                  {paymentIntent.qr && (
-                    <div className="flex flex-col items-center justify-center p-4 bg-white rounded-2xl w-full max-w-[260px] shadow-[0_0_30px_rgba(123,92,255,0.3)]">
-                      <img src={paymentIntent.qr} alt="Deposit QR code" className="w-52 h-52 object-contain rounded-lg" />
-                    </div>
-                  )}
-                  {paymentIntent.payTo && (
-                    <div className="w-full bg-warmneutral p-3.5 rounded-xl border border-cardborder font-mono text-xs">
-                      <span className="text-textsecondary block text-[10px]">PAYMENT CHANNEL ADDRESS</span>
-                      <span className="font-bold text-textprimary text-[10px] break-all">{paymentIntent.payTo}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="border-t border-cardborder pt-4">
-                  {!simulated && (
-                    <>
-                      <label htmlFor="tx-hash" className="block font-mono text-xs text-textsecondary mb-1">
-                        TRANSACTION HASH
-                      </label>
-                      <input
-                        id="tx-hash"
-                        type="text"
-                        value={txHashInput}
-                        onChange={(e) => setTxHashInput(e.target.value)}
-                        placeholder="0x…"
-                        className="w-full mb-3 px-4 py-3 rounded-xl border border-[#6B6E9E] bg-warmneutral font-mono text-xs text-textprimary focus:outline-none focus:border-primaryviolet"
-                      />
-                    </>
-                  )}
-                  <button
-                    type="button"
-                    disabled={paymentValidating || (!simulated && !txHashInput.trim())}
-                    onClick={() => void handleConfirmPaymentSubmit()}
-                    className="w-full px-6 py-3.5 rounded-full bg-tealbrand text-[#04161A] font-sans text-sm font-bold uppercase tracking-wider shadow-[0_0_22px_rgba(47,208,221,0.5)] hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-2 min-h-[48px]"
-                  >
-                    <span className={`material-symbols-outlined text-base ${paymentValidating ? 'animate-spin' : ''}`}>
-                      {paymentValidating ? 'refresh' : 'check_circle'}
-                    </span>
-                    {simulated ? 'SIMULATE DEPOSIT' : 'CONFIRM DEPOSIT'}
-                  </button>
-                </div>
-              </>
+              paymentIntent.evm && (
+                <WalletDeposit
+                  missionId={mission?.id ?? ''}
+                  plan={paymentIntent.evm}
+                  onDeposited={handleWalletDeposit}
+                  label={`Pay ${paymentIntent.amount} USDC with wallet`}
+                />
+              )
             )}
 
             <p className="text-center font-mono text-[11px] text-textsecondary">Intent {shortTx(paymentIntent.intentId)}</p>

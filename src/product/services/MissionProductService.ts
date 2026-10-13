@@ -1,6 +1,7 @@
 import type { ConnectivityProvider } from '../../providers/connectivity/ConnectivityProvider.ts'
 import type { MissionRepository } from '../persistence/MissionRepository.ts'
-import type { Capabilities, ClaimRecord, DestinationInfo, ProductMission, PublicEsimInfo } from '../types/mission.ts'
+import { MemoryMissionLog, type MissionLog, type MissionLogEntry, type MissionLogType } from '../persistence/MissionLog.ts'
+import type { Capabilities, ClaimRecord, DestinationInfo, ProductMission, PublicEsimInfo, TopUpRecord } from '../types/mission.ts'
 import { IntegratedMeterService } from '../../meter/meter-service.ts'
 import { computeCostRaw, type ChannelBalancePort } from '../../services/PolicyEnforcer.ts'
 import { createConnectivitySession, type ConnectivitySession } from '../../models/ConnectivitySession.ts'
@@ -10,15 +11,15 @@ import type { PaymentRail } from '../../rails/PaymentRail.ts'
 import { assertSufficientResellerBalance } from '../../services/reseller-balance-guard.ts'
 import { createChannelMutex } from '../../shared/mutex.ts'
 import { equivalentBytes } from '../../shared/usage-math.ts'
-import { atomicToRaw, rawToAtomicCeil, rawToAtomicFloor, formatAtomic, usdcToAtomic } from '../../shared/monad/amounts.ts'
+import { atomicToRaw, rawToAtomicCeil, rawToAtomicFloor, formatAtomic } from '../../shared/monad/amounts.ts'
 import {
+  claimableAtomic,
   claimIsDue,
   nextFundCents,
   autoCloseReason,
   type FundFlowConfig,
   type AutoCloseReason,
   DEFAULT_FUND_FLOW,
-  DEFAULT_TIMEOUT_SECONDS,
 } from './fund-flow.ts'
 import { isWildcardOrigin } from '../api/cors.ts'
 
@@ -27,6 +28,17 @@ const MICRO_USD_PER_CENT = 10_000n
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** The usage figures every usage entry of the log carries. */
+function usageData(mission: ProductMission, extra: MissionLogEntry['data']): MissionLogEntry['data'] {
+  return {
+    ...extra,
+    meteredBytes: mission.meteredBytes,
+    consumedMb: mission.consumedMb,
+    consumedUsdc: mission.consumedUsdc,
+    balanceUsdc: mission.balanceUsdc,
+  }
 }
 
 function applyMeteredBytes(mission: ProductMission, totalBytes: bigint): void {
@@ -55,6 +67,52 @@ function envRaw(key: string): bigint | undefined {
   return value ? parseNonNegativeIntegerRaw(value) : undefined
 }
 
+/**
+ * What the trip has used so far, in USDC atomic units, rounded down: the
+ * metered bytes at the mission's price (`PRICE_PER_MB_RAW` when set). The one
+ * figure for money: a claim collects it, a close settles it and the app is
+ * asked to sign for it, so they can never disagree by a rounding unit.
+ */
+export function usedAtomic(mission: Pick<ProductMission, 'meteredBytes' | 'destination'>): bigint {
+  const pricePerMbRaw = envRaw('PRICE_PER_MB_RAW') ?? usdcToRaw(mission.destination.pricePerMbUsdc)
+  return rawToAtomicFloor(computeCostRaw(BigInt(mission.meteredBytes || '0'), pricePerMbRaw))
+}
+
+/** How long an answer of the rail's readiness check is reused, by answer. */
+const RAIL_CHECK_TTL_MS = {
+  /** Ready: the key is the operator or the payee. Only `setOperator` changes that. */
+  ready: 60_000,
+  /** The key is not allowed: asked again soon, so a fix shows up quickly. */
+  operator_not_authorized: 15_000,
+  /** The chain could not be asked: barely kept, so a blip is not held against the rail. */
+  upstream_unavailable: 3_000,
+} as const
+
+export type Readiness = { ready: true } | { ready: false; reason: string; detail: string }
+
+/** The same transaction, however the caller wrote its hash. */
+function sameTx(a: string | undefined, b: string): boolean {
+  return a !== undefined && a.trim().toLowerCase() === b.trim().toLowerCase()
+}
+
+/**
+ * Sets what the trip can spend to what its channel holds. The figures are
+ * the chain's total, set and never added to, so confirming a deposit again
+ * cannot raise them.
+ */
+function applyChannelDeposit(mission: ProductMission, depositRaw: bigint): void {
+  const depositAtomic = rawToAtomicCeil(depositRaw)
+  mission.depositAtomic = depositAtomic.toString()
+  mission.budgetUsdc = Number(formatAtomic(depositAtomic))
+  mission.balanceUsdc = Math.max(0, parseFloat((mission.budgetUsdc - mission.consumedUsdc).toFixed(6)))
+}
+
+/**
+ * Reasons that are no verdict on the payment: the chain could not be asked,
+ * or has not included the transaction yet. Asking again may succeed.
+ */
+const UNDECIDED_DEPOSIT_REASONS = new Set(['tx_not_found'])
+
 function unavailable(message: string): Error {
   const err = new Error(`503: ${message}`)
   ;(err as unknown as { statusCode: number }).statusCode = 503
@@ -72,24 +130,31 @@ export type AdvanceResult = {
 
 export type MissionProductServiceOptions = {
   repo: MissionRepository
+  /** What happened to each trip, in order. Kept in memory when not given. */
+  missionLog?: MissionLog
   connectivity: ConnectivityProvider
   /** How missions are paid: a real chain, or FakeRail for demos. */
   rail: PaymentRail
   hasCitrusReal?: boolean
   fundFlow?: FundFlowConfig
-  timeoutSeconds?: number
   logger?: (line: Record<string, unknown>) => void
+  /** Clock of the rail readiness cache, in milliseconds. Injectable for tests. */
+  now?: () => number
 }
 
 export class MissionProductService {
   private repo: MissionRepository
+  private missionLog: MissionLog
   private connectivity: ConnectivityProvider
   private rail: PaymentRail
   private hasCitrusReal: boolean
   private fundFlow: FundFlowConfig
-  private timeoutSeconds: number
   private logger: (line: Record<string, unknown>) => void
+  private now: () => number
   private locks = createChannelMutex()
+  private marginErrorLogged = false
+  /** Last answer of the rail's readiness check, shared by callers until it expires. */
+  private railCheck?: { answer: Promise<Readiness>; expiresAt: number }
 
   // Active sessions & meter services per mission
   private sessions = new Map<string, ConnectivitySession>()
@@ -97,12 +162,33 @@ export class MissionProductService {
 
   constructor(options: MissionProductServiceOptions) {
     this.repo = options.repo
+    this.missionLog = options.missionLog ?? new MemoryMissionLog()
     this.connectivity = options.connectivity
     this.rail = options.rail
     this.hasCitrusReal = options.hasCitrusReal ?? false
     this.fundFlow = options.fundFlow ?? DEFAULT_FUND_FLOW
-    this.timeoutSeconds = options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS
     this.logger = options.logger ?? ((line) => console.log(JSON.stringify(line)))
+    this.now = options.now ?? (() => Date.now())
+  }
+
+  /**
+   * Adds an entry to the trip's log. Call it after the change it describes was
+   * saved. A log that cannot be written never fails the operation: it is
+   * reported. `data` holds amounts and transaction hashes only, never a
+   * signature, a key, or the eSIM's activation code.
+   */
+  private record(mission: ProductMission, type: MissionLogType, data: MissionLogEntry['data']): void {
+    try {
+      this.missionLog.append({ v: 1, at: new Date().toISOString(), missionId: mission.id, iccid: mission.iccid ?? null, type, data })
+    } catch (error) {
+      this.logger({ level: 'error', msg: 'mission log not written', missionId: mission.id, type, detail: messageOf(error) })
+    }
+  }
+
+  /** The trip's log, oldest first. Fails for an unknown trip. */
+  async getMissionLog(missionId: string): Promise<MissionLogEntry[]> {
+    await this.load(missionId)
+    return this.missionLog.list(missionId)
   }
 
   private isLiveMode(): boolean {
@@ -128,7 +214,8 @@ export class MissionProductService {
 
   async getCapabilities(): Promise<Capabilities> {
     const isLive = this.isLiveMode()
-    const railReady = this.rail.isLive
+    // A live rail that cannot settle takes no payments: the app shows its notice.
+    const railReady = this.rail.isLive && (await this.getReadiness()).ready
     const citrusReady = this.hasCitrusReal
 
     let mode: Capabilities['mode'] = 'demo'
@@ -153,6 +240,47 @@ export class MissionProductService {
       liveEnabled: isLive,
       requiresAuth: isLive && Boolean(process.env.ASTROAM_DEMO_ACCESS_TOKEN),
       missingConfiguration: this.getMissingConfiguration(),
+    }
+  }
+
+  /**
+   * Whether the server can do its part of a trip. Not ready when the payment
+   * rail's key is not allowed to collect and close: deposits would still
+   * land in the escrow, and nobody here could settle them.
+   *
+   * The answer is reused for a short time (`RAIL_CHECK_TTL_MS`), so `/ready`,
+   * the capabilities and every intent do not each ask the chain. A rail with
+   * no key of its own (FakeRail) is always ready.
+   */
+  getReadiness(): Promise<Readiness> {
+    const checkOperator = this.rail.checkOperator?.bind(this.rail)
+    if (!checkOperator) return Promise.resolve({ ready: true })
+    if (this.railCheck && this.now() < this.railCheck.expiresAt) return this.railCheck.answer
+
+    // Callers that arrive while the chain is being asked share this one question.
+    const entry = { answer: Promise.resolve<Readiness>({ ready: true }), expiresAt: Number.POSITIVE_INFINITY }
+    entry.answer = checkOperator().then(
+      (check): Readiness => {
+        entry.expiresAt = this.now() + RAIL_CHECK_TTL_MS[check.authorized ? 'ready' : check.reason]
+        return check.authorized ? { ready: true } : { ready: false, reason: check.reason, detail: check.detail }
+      },
+      (error): Readiness => {
+        entry.expiresAt = this.now() + RAIL_CHECK_TTL_MS.upstream_unavailable
+        return { ready: false, reason: 'upstream_unavailable', detail: messageOf(error) }
+      },
+    )
+    this.railCheck = entry
+    return entry.answer
+  }
+
+  /**
+   * A deposit is never invited into an escrow this server cannot settle: no
+   * intent is issued while the rail is not ready.
+   */
+  private async assertRailCanSettle(): Promise<void> {
+    const readiness = await this.getReadiness()
+    if (!readiness.ready) {
+      throw unavailable(`payments are not available: the payment rail cannot settle deposits right now (${readiness.reason})`)
     }
   }
 
@@ -201,10 +329,16 @@ export class MissionProductService {
   }
 
   async createPaymentIntent(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.createPaymentIntentLocked(missionId))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async createPaymentIntentLocked(missionId: string) {
     const mission = await this.load(missionId)
     if (this.isLiveMode() && !this.rail.isLive) {
       throw unavailable('payments are simulated; configure a live payment rail for live mode')
     }
+    await this.assertRailCanSettle()
 
     await assertSufficientResellerBalance(this.connectivity)
 
@@ -232,6 +366,20 @@ export class MissionProductService {
   }
 
   async confirmPayment(missionId: string, intentId: string, txHash: string) {
+    return this.locks.withChannelLock(missionId, () => this.confirmPaymentLocked(missionId, intentId, txHash))
+  }
+
+  /**
+   * Assumes the caller holds the mission's channel lock.
+   *
+   * The deposit is checked against the chain alone: the rail derives the
+   * escrow from the mission id, so only a deposit into this mission's own
+   * escrow can pay for it, and a server restarted since the intent confirms
+   * it all the same. `intentId` is a label and decides nothing. A mission is
+   * paid once: its record keeps the transaction, and any later confirmation
+   * returns that result without asking the rail.
+   */
+  private async confirmPaymentLocked(missionId: string, intentId: string, txHash: string) {
     const mission = await this.load(missionId)
 
     if (mission.paymentStatus === 'paid' && mission.depositTxHash) {
@@ -248,10 +396,18 @@ export class MissionProductService {
       throw unavailable('payments are simulated; configure a live payment rail for live mode')
     }
 
-    const result = await this.rail.confirmDeposit({ missionId, intentId, txHash, purpose: 'mission' })
+    const result = await this.rail.confirmDeposit({
+      missionId,
+      txHash,
+      purpose: 'mission',
+      amountUsdc: mission.budgetUsdc,
+    })
     if (!result.valid) {
-      mission.paymentStatus = 'failed'
-      await this.repo.save(mission)
+      // Only a verdict marks the payment failed; a later confirmation can still pay.
+      if (!UNDECIDED_DEPOSIT_REASONS.has(result.reason)) {
+        mission.paymentStatus = 'failed'
+        await this.repo.save(mission)
+      }
       throw new Error(`Deposit for intent ${intentId} was not accepted: ${result.reason}`)
     }
 
@@ -261,7 +417,8 @@ export class MissionProductService {
     mission.depositExplorerUrl = result.explorerUrl
     mission.channelId = result.channelId
     mission.escrowId = result.channelId
-    mission.depositAtomic = rawToAtomicCeil(result.depositRaw).toString()
+    // What the escrow holds, which need not be what the mission asked for.
+    applyChannelDeposit(mission, result.depositRaw)
     mission.depositVerified = true
     if (result.travelerAddress) mission.travelerAddress = result.travelerAddress
     if (result.sessionKey) mission.sessionKey = result.sessionKey
@@ -278,6 +435,11 @@ export class MissionProductService {
   }
 
   async activateMission(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.activateMissionLocked(missionId))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async activateMissionLocked(missionId: string) {
     const mission = await this.load(missionId)
 
     if (mission.paymentStatus !== 'paid' || !mission.channelId) {
@@ -326,10 +488,18 @@ export class MissionProductService {
       // The first usage reading sets the baseline instead.
     }
     await this.repo.save(mission)
+    this.record(mission, 'esim.provisioned', {
+      isMock: !this.hasCitrusReal,
+      providerStatus: esimRecord.status,
+      budgetUsdc: mission.budgetUsdc,
+    })
+    if (mission.chargedBaselineMicroUsd !== undefined) {
+      this.record(mission, 'usage.baseline', { chargedBaselineMicroUsd: mission.chargedBaselineMicroUsd })
+    }
 
     // First tranche. A failure here does not undo the activation: the fund-flow job retries.
     try {
-      await this.locks.withChannelLock(mission.id, async () => this.fundTranche(await this.load(mission.id)))
+      await this.fundTranche(mission)
     } catch (error) {
       this.logger({ level: 'error', msg: 'first tranche not funded', missionId: mission.id, detail: messageOf(error) })
     }
@@ -385,6 +555,11 @@ export class MissionProductService {
   }
 
   async pauseMission(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.pauseMissionLocked(missionId))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async pauseMissionLocked(missionId: string) {
     const mission = await this.load(missionId)
     if (this.isLiveMode() && !this.hasCitrusReal) {
       throw unavailable('Citrus Mobile is not configured for live mode')
@@ -396,11 +571,17 @@ export class MissionProductService {
     mission.status = 'paused'
     if (mission.esim) mission.esim.status = 'suspended'
     await this.repo.save(mission)
+    this.record(mission, 'esim.paused', { reason: 'traveler' })
 
     return { status: 'paused', esimStatus: 'paused' }
   }
 
   async resumeMission(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.resumeMissionLocked(missionId))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async resumeMissionLocked(missionId: string) {
     const mission = await this.load(missionId)
     if (this.isLiveMode() && !this.hasCitrusReal) {
       throw unavailable('Citrus Mobile is not configured for live mode')
@@ -412,16 +593,23 @@ export class MissionProductService {
     mission.status = 'active'
     if (mission.esim) mission.esim.status = 'active'
     await this.repo.save(mission)
+    this.record(mission, 'esim.resumed', { reason: 'traveler' })
 
     return { status: 'active', esimStatus: 'active' }
   }
 
   async createTopUpIntent(missionId: string, amountUsdc: number) {
+    return this.locks.withChannelLock(missionId, () => this.createTopUpIntentLocked(missionId, amountUsdc))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async createTopUpIntentLocked(missionId: string, amountUsdc: number) {
     const mission = await this.load(missionId)
     if (!mission.channelId) throw new Error('This mission has no payment channel yet')
     if (this.isLiveMode() && !this.rail.isLive) {
       throw unavailable('payments are simulated; configure a live payment rail for live mode')
     }
+    await this.assertRailCanSettle()
 
     const intent = await this.rail.createDepositIntent({
       missionId,
@@ -474,46 +662,88 @@ export class MissionProductService {
   }
 
   async confirmTopUpPayment(missionId: string, intentId: string, txHash: string) {
-    const mission = await this.load(missionId)
+    return this.locks.withChannelLock(missionId, () => this.confirmTopUpPaymentLocked(missionId, intentId, txHash))
+  }
 
-    const topup = mission.topups.find((t) => t.intentId === intentId)
-    if (!topup) throw new Error(`Top-up for intent ${intentId} not found`)
-    if (topup.status === 'settled' && topup.txHash) {
-      return { valid: true, status: 'settled', txHash: topup.txHash, explorerUrl: topup.explorerUrl }
+  /**
+   * Assumes the caller holds the mission's channel lock.
+   *
+   * A top-up is credited once per transaction, and not from memory:
+   *
+   * - The settled top-ups of the mission record are the transactions already
+   *   credited. They are saved with the mission, so they hold across a
+   *   restart; a transaction found there returns its earlier result.
+   * - The budget is the escrow's on-chain total, set and never added to.
+   * - The record is saved before the eSIM wallet is funded, so a crash in
+   *   between cannot fund it a second time.
+   *
+   * `intentId` is a label: it picks which pending top-up the transaction
+   * settles. A transaction that did top up this mission's escrow is credited
+   * even when no pending top-up carries that label.
+   */
+  private async confirmTopUpPaymentLocked(missionId: string, intentId: string, txHash: string) {
+    const mission = await this.load(missionId)
+    if (!mission.channelId) throw new Error('This mission has no payment channel yet')
+
+    const credited = mission.topups.find((t) => t.status === 'settled' && sameTx(t.txHash, txHash))
+    if (credited) {
+      return {
+        valid: true,
+        status: 'settled',
+        txHash: credited.txHash!,
+        explorerUrl: credited.explorerUrl,
+        balanceUsdc: mission.balanceUsdc,
+      }
     }
     if (this.isLiveMode() && !this.rail.isLive) {
       throw unavailable('payments are simulated; configure a live payment rail for live mode')
     }
 
+    const pending = mission.topups.find((t) => t.intentId === intentId && t.status === 'pending')
     const result = await this.rail.confirmDeposit({
       missionId,
-      intentId,
       txHash,
       purpose: 'topup',
       channelId: mission.channelId,
+      amountUsdc: pending?.amountUsdc,
     })
     if (!result.valid) throw new Error(`Top-up was not accepted: ${result.reason}`)
 
+    // What the transaction added, which need not be what the intent asked for.
+    const addedUsdc = rawToUsdc(result.amountRaw)
+    const topup: TopUpRecord = pending ?? {
+      id: `top_${Date.now()}`,
+      intentId,
+      amountUsdc: addedUsdc,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    }
+    if (!pending) mission.topups.push(topup)
+    topup.amountUsdc = addedUsdc
+    topup.status = 'settled'
+    topup.txHash = result.txHash
+    topup.explorerUrl = result.explorerUrl
+    applyChannelDeposit(mission, result.depositRaw)
+    // A top-up restarts the escrow's refund timeout.
+    if (result.escrowActiveAt) mission.escrowActiveAt = result.escrowActiveAt
+    const resumed = mission.status === 'paused' && mission.balanceUsdc > 0
+    if (resumed) {
+      mission.status = 'active'
+      mission.esimStatus = 'active'
+    }
+    await this.repo.save(mission)
+    if (resumed) this.record(mission, 'esim.resumed', { reason: 'topup' })
+
     if (mission.iccid) {
       try {
-        const amountCents = Math.max(1, Math.round(topup.amountUsdc * 100))
-        await this.connectivity.topUp(mission.iccid, amountCents)
+        const cents = Math.max(1, Math.round(addedUsdc * 100))
+        await this.connectivity.topUp(mission.iccid, cents)
+        this.record(mission, 'esim.funded', { amountCents: cents, source: 'topup', fundedCents: mission.fundedCents ?? 0 })
       } catch {
         // The eSIM wallet catches up on the next funding pass.
       }
     }
 
-    topup.status = 'settled'
-    topup.txHash = result.txHash
-    topup.explorerUrl = result.explorerUrl
-    mission.balanceUsdc += topup.amountUsdc
-    mission.budgetUsdc += topup.amountUsdc
-    if (mission.status === 'paused' && mission.balanceUsdc > 0) {
-      mission.status = 'active'
-      mission.esimStatus = 'active'
-    }
-
-    await this.repo.save(mission)
     return {
       valid: true,
       status: 'settled',
@@ -524,44 +754,78 @@ export class MissionProductService {
   }
 
   async finishMission(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.finishMissionLocked(missionId))
+  }
+
+  /**
+   * What a close settles: the usage. Claims collect at most the usage
+   * (`claimIfDue`), so the usage is never below what was claimed and nothing
+   * else is needed in normal operation.
+   *
+   * The one exception is a trip found with more claimed than it metered:
+   * state from before claims were bounded by usage, or a usage figure
+   * corrected downward. The contract cannot settle below what the payee
+   * already holds, so such a trip closes at the claimed total instead of not
+   * closing at all, and `aboveUsageAtomic` says by how much. The caller
+   * records it (`recordClosedAboveUsage`): it is never absorbed silently.
+   */
+  private async settlementFor(
+    mission: ProductMission,
+  ): Promise<{ usedAtomic: bigint; settleAtomic: bigint; aboveUsageAtomic: bigint }> {
+    const used = usedAtomic(mission)
+    let claimed = BigInt(mission.claimedAtomic ?? '0')
+    // The chain may hold a claim the record missed, and the chain is what the contract enforces.
+    if (this.rail.readEscrowState && mission.channelId) {
+      const state = await this.rail.readEscrowState(mission.channelId)
+      if (state && state.claimedAtomic > claimed) claimed = state.claimedAtomic
+    }
+    if (claimed <= used) return { usedAtomic: used, settleAtomic: used, aboveUsageAtomic: 0n }
+    return { usedAtomic: used, settleAtomic: claimed, aboveUsageAtomic: claimed - used }
+  }
+
+  /**
+   * Marks, in the mission and the log, a trip whose close paid more than it
+   * metered. Judged on what the close actually settled, not on what was asked.
+   */
+  private recordClosedAboveUsage(mission: ProductMission, used: bigint, settled: bigint): void {
+    if (settled <= used) return
+    mission.closedAboveUsageAtomic = (settled - used).toString()
+    this.logger({
+      level: 'error',
+      msg: 'trip closed above its metered usage',
+      missionId: mission.id,
+      usedAtomic: used.toString(),
+      settledAtomic: settled.toString(),
+      aboveUsageAtomic: mission.closedAboveUsageAtomic,
+    })
+  }
+
+  /**
+   * Assumes the caller holds the mission's channel lock. Finishing a trip that
+   * is already completed returns the same result and sends nothing.
+   */
+  private async finishMissionLocked(missionId: string) {
     const mission = await this.load(missionId)
+    if (mission.status === 'completed') {
+      // A trip with no close of any kind recorded was completed with nothing to settle.
+      return this.finishResult(mission, mission.closeTxHash || mission.settlement ? 'closed' : 'nothing_to_close')
+    }
     if (!mission.channelId) throw new Error('This mission has no payment channel to close')
     if (this.isLiveMode() && !this.rail.isLive) {
       throw unavailable('payments are simulated; configure a live payment rail for live mode')
     }
 
-    // Settle exactly what was used, in integer raw units (never a float).
-    const pricePerMbRaw = envRaw('PRICE_PER_MB_RAW') ?? usdcToRaw(mission.destination.pricePerMbUsdc)
-    const usedRaw = computeCostRaw(BigInt(mission.meteredBytes || '0'), pricePerMbRaw)
-    const outcome = await this.rail.closeChannel(mission.channelId, usedRaw)
-    if (outcome.kind === 'failed' || outcome.kind === 'blocked') {
-      throw new Error(`Could not close the payment channel: ${outcome.detail}`)
-    }
+    // Settle exactly what was used, in integer units (never a float): the
+    // same figure the claims collected up to.
+    const settlement = await this.settlementFor(mission)
+    const kind = await this.closeEscrow(mission, settlement, settlement.settleAtomic)
+    return this.finishResult(mission, kind === 'settled_on_chain' ? 'closed' : kind)
+  }
 
-    if (mission.iccid) {
-      try {
-        await this.connectivity.refundUnused(mission.iccid)
-      } catch {
-        // The eSIM wallet is reconciled by the session closer.
-      }
-    }
-
-    mission.status = 'completed'
-    mission.esimStatus = 'disabled'
-    if (outcome.kind === 'nothing_to_close') {
-      mission.settledUsdc = 0
-      mission.refundedUsdc = mission.budgetUsdc
-    } else {
-      mission.closeTxHash = outcome.txHash
-      mission.closeExplorerUrl = outcome.explorerUrl
-      mission.settledUsdc = rawToUsdc(outcome.settledRaw)
-      if (outcome.kind === 'closed') mission.refundedUsdc = rawToUsdc(outcome.refundedRaw)
-    }
-    await this.repo.save(mission)
-
+  private finishResult(mission: ProductMission, closeKind: string) {
     return {
       status: 'completed',
-      closeKind: outcome.kind,
+      closeKind,
       txHash: mission.closeTxHash,
       explorerUrl: mission.closeExplorerUrl,
       settledUsdc: mission.settledUsdc,
@@ -570,10 +834,111 @@ export class MissionProductService {
   }
 
   /**
+   * The one way a trip's escrow is closed and the trip recorded as completed,
+   * for the traveler's finish, their final voucher and the automatic close.
+   *
+   * - The escrow is closed first. The eSIM wallet is only defunded once the
+   *   escrow is known to be closed, so a close that fails leaves the trip as
+   *   it was, with its line funded.
+   * - A close that fails while the chain reports the escrow settled (it
+   *   landed, but the record was never saved, or it was closed from outside
+   *   the app) is not an error: the trip is recorded as completed from the
+   *   chain, with no close transaction hash. The chain does not keep what the
+   *   close paid once it is settled, so the figure is what this close would
+   *   have settled, and never below what the chain says was claimed.
+   *
+   * Returns what happened to the channel. Assumes the channel lock is held.
+   */
+  private async closeEscrow(
+    mission: ProductMission,
+    settlement: { usedAtomic: bigint },
+    settleAtomic: bigint,
+    reason?: AutoCloseReason,
+  ): Promise<'closed' | 'closed_unverified' | 'nothing_to_close' | 'settled_on_chain'> {
+    const outcome = await this.rail.closeChannel(mission.channelId!, atomicToRaw(settleAtomic))
+    if (outcome.kind === 'blocked') {
+      throw new Error(`Could not close the payment channel: ${outcome.detail}`)
+    }
+
+    let chainDeposit: bigint | undefined
+    let chainClaimed = 0n
+    if (outcome.kind === 'failed') {
+      if (this.rail.readEscrowState) {
+        const state = await this.rail.readEscrowState(mission.channelId!)
+        if (!state?.settled) throw new Error(`Could not close the payment channel: ${outcome.detail}`)
+        chainDeposit = state.depositAtomic
+        chainClaimed = state.claimedAtomic
+      } else if (!outcome.detail.includes('already settled') && !outcome.detail.includes('already closed')) {
+        throw new Error(`Could not close the payment channel: ${outcome.detail}`)
+      }
+    }
+
+    // The escrow is closed: only now does the eSIM wallet go back to the reseller.
+    if (mission.iccid) {
+      try {
+        await this.connectivity.refundUnused(mission.iccid)
+      } catch {
+        // The eSIM wallet is reconciled by the session closer; the USDC refund does not wait for it.
+      }
+    }
+
+    const deposit = chainDeposit ?? BigInt(mission.depositAtomic ?? '0')
+    let settled: bigint
+    let kind: 'closed' | 'closed_unverified' | 'nothing_to_close' | 'settled_on_chain'
+    if (outcome.kind === 'closed' || outcome.kind === 'closed_unverified') {
+      settled = rawToAtomicFloor(outcome.settledRaw)
+      kind = outcome.kind
+    } else if (outcome.kind === 'nothing_to_close') {
+      settled = 0n
+      kind = 'nothing_to_close'
+    } else {
+      settled = settleAtomic > chainClaimed ? settleAtomic : chainClaimed
+      if (deposit > 0n && settled > deposit) settled = deposit
+      kind = 'settled_on_chain'
+    }
+
+    mission.status = 'completed'
+    mission.esimStatus = 'disabled'
+    if (kind === 'nothing_to_close') {
+      mission.settledUsdc = 0
+      mission.refundedUsdc = mission.budgetUsdc
+    } else {
+      mission.settlement = 'close'
+      mission.settledUsdc = Number(formatAtomic(settled))
+      mission.refundedUsdc =
+        outcome.kind === 'closed' ? rawToUsdc(outcome.refundedRaw) : Number(formatAtomic(deposit > settled ? deposit - settled : 0n))
+      mission.claimedAtomic = settled.toString()
+      if (outcome.kind === 'closed' || outcome.kind === 'closed_unverified') {
+        mission.closeTxHash = outcome.txHash
+        mission.closeExplorerUrl = outcome.explorerUrl
+        this.recordClosedAboveUsage(mission, settlement.usedAtomic, settled)
+      }
+    }
+    if (reason) mission.autoCloseReason = reason
+    await this.repo.save(mission)
+    this.record(mission, 'mission.closed', {
+      txHash: mission.closeTxHash ?? null,
+      closeKind: kind,
+      reason: reason ?? 'traveler',
+      meteredBytes: mission.meteredBytes,
+      settledUsdc: mission.settledUsdc ?? null,
+      refundedUsdc: mission.refundedUsdc ?? null,
+      closedAboveUsageAtomic: mission.closedAboveUsageAtomic ?? null,
+    })
+    this.logger({ level: 'info', msg: 'escrow close', missionId: mission.id, txHash: mission.closeTxHash, reason: reason ?? 'traveler' })
+    return kind
+  }
+
+  /**
    * Gives the whole deposit back for a trip that was paid but never started
    * (no eSIM, no usage). The rail closes the channel with nothing to settle.
    */
   async cancelMission(missionId: string) {
+    return this.locks.withChannelLock(missionId, () => this.cancelMissionLocked(missionId))
+  }
+
+  /** Assumes the caller holds the mission's channel lock. */
+  private async cancelMissionLocked(missionId: string) {
     const mission = await this.load(missionId)
     const result = () => ({
       status: 'cancelled' as const,
@@ -608,6 +973,15 @@ export class MissionProductService {
       mission.refundedUsdc = mission.budgetUsdc
     }
     await this.repo.save(mission)
+    this.record(mission, 'mission.closed', {
+      txHash: mission.closeTxHash ?? null,
+      closeKind: 'cancelled',
+      reason: 'traveler',
+      meteredBytes: mission.meteredBytes,
+      settledUsdc: 0,
+      refundedUsdc: mission.refundedUsdc ?? null,
+      closedAboveUsageAtomic: null,
+    })
     return result()
   }
 
@@ -652,7 +1026,11 @@ export class MissionProductService {
     if (process.env.ENABLE_DEMO_TRAFFIC !== 'true') {
       throw new Error('Demo traffic injection is not enabled on this server')
     }
+    return this.locks.withChannelLock(missionId, () => this.processDemoTrafficLocked(missionId, bytes))
+  }
 
+  /** Assumes the caller holds the mission's channel lock. */
+  private async processDemoTrafficLocked(missionId: string, bytes: number) {
     const mission = await this.load(missionId)
     if (mission.status !== 'active' || mission.esimStatus !== 'active' || !mission.channelId) {
       throw new Error('Traffic can only be injected into an active mission')
@@ -667,12 +1045,15 @@ export class MissionProductService {
     const currentBytes = BigInt(mission.meteredBytes || '0') + BigInt(bytes)
     applyMeteredBytes(mission, currentBytes)
 
-    if (result.actionApplied.kind === 'suspend' || mission.balanceUsdc <= 0) {
+    const suspended = result.actionApplied.kind === 'suspend' || mission.balanceUsdc <= 0
+    if (suspended) {
       mission.status = 'paused'
       mission.esimStatus = 'paused'
     }
 
     await this.repo.save(mission)
+    this.record(mission, 'usage.demo_traffic', usageData(mission, { bytes }))
+    if (suspended) this.record(mission, 'esim.paused', { reason: 'budget_exhausted' })
 
     let cumulativeAmount: string | undefined
     let remaining: string | undefined
@@ -713,8 +1094,7 @@ export class MissionProductService {
   async voucherRequest(missionId: string) {
     const mission = await this.load(missionId)
     const depositAtomic = BigInt(mission.depositAtomic ?? '0')
-    const priceAtomic = usdcToAtomic(mission.destination.pricePerMbUsdc)
-    const meteredAtomic = (BigInt(mission.meteredBytes || '0') * priceAtomic) / 1_000_000n
+    const meteredAtomic = usedAtomic(mission)
     const cumulativeAtomic = meteredAtomic > depositAtomic ? depositAtomic : meteredAtomic
 
     return {
@@ -773,12 +1153,23 @@ export class MissionProductService {
     return true
   }
 
+  /** Logs the highest voucher received, by amount: the signature stays out of the log. */
+  private recordVoucher(mission: ProductMission): void {
+    this.record(mission, 'voucher.received', {
+      cumulativeAtomic: mission.voucher!.cumulativeAtomic,
+      depositAtomic: mission.depositAtomic ?? '0',
+    })
+  }
+
   /** The app sends a cumulative voucher after a usage reading. Funds the next tranche when it covers one. */
   async submitVoucher(missionId: string, voucher: { cumulativeAtomic: string; signature: string }) {
     return this.locks.withChannelLock(missionId, async () => {
       const mission = await this.load(missionId)
       const isNew = await this.acceptVoucher(mission, voucher)
-      if (isNew) await this.repo.save(mission)
+      if (isNew) {
+        await this.repo.save(mission)
+        this.recordVoucher(mission)
+      }
       let fundedNow = 0
       try {
         fundedNow = await this.fundTranche(mission)
@@ -835,6 +1226,7 @@ export class MissionProductService {
     mission.fundedCents = funded + amount
     mission.pendingFund = undefined
     await this.repo.save(mission)
+    this.record(mission, 'esim.funded', { amountCents: amount, source: 'tranche', fundedCents: mission.fundedCents })
     this.logger({ level: 'info', msg: 'esim tranche funded', missionId: mission.id, amountCents: amount, fundedCents: mission.fundedCents })
     return amount
   }
@@ -846,6 +1238,7 @@ export class MissionProductService {
     if (mission.chargedBaselineMicroUsd === undefined) {
       mission.chargedBaselineMicroUsd = usage.chargedMicroUsd.toString()
       await this.repo.save(mission)
+      this.record(mission, 'usage.baseline', { chargedBaselineMicroUsd: mission.chargedBaselineMicroUsd })
       return
     }
     const baseline = BigInt(mission.chargedBaselineMicroUsd)
@@ -857,14 +1250,47 @@ export class MissionProductService {
       applyMeteredBytes(mission, bytes)
       mission.carrierBytes = bytes.toString()
       await this.repo.save(mission)
+      this.record(
+        mission,
+        'usage.reading',
+        usageData(mission, {
+          tripChargedMicroUsd: charged.toString(),
+          walletMicroUsd: usage.walletMicroUsd.toString(),
+          providerStatus: usage.status,
+        }),
+      )
     }
   }
 
-  /** Sends a `claim` when the voucher holds a tranche not collected yet. */
+  /** When the rail reports the channel's claimed total already covers `claimTotalAtomic`, records it. */
+  private async recordClaimedOnChain(mission: ProductMission, claimTotalAtomic: bigint): Promise<boolean> {
+    if (!this.rail.readEscrowState || !mission.channelId) return false
+    const state = await this.rail.readEscrowState(mission.channelId)
+    if (!state || state.claimedAtomic < claimTotalAtomic) return false
+    mission.claimedAtomic = state.claimedAtomic.toString()
+    if (state.activeAt) mission.escrowActiveAt = new Date(state.activeAt * 1000).toISOString()
+    await this.repo.save(mission)
+    // The claim landed earlier; its transaction is not known here.
+    this.record(mission, 'escrow.claim', { txHash: null, cumulativeAtomic: mission.claimedAtomic, source: 'chain' })
+    return true
+  }
+
+  /**
+   * Sends a `claim` when a tranche of usage is not collected yet. It collects
+   * what the trip used, up to the voucher: the voucher is a ceiling the app
+   * signs ahead of usage, so claiming all of it would charge for data not
+   * used. Claimed therefore never exceeds used, and a close at the used
+   * amount (`settlementFor`) is never below what was claimed.
+   */
   private async claimIfDue(mission: ProductMission, now: Date): Promise<ClaimRecord | null> {
     if (!this.rail.claim || !mission.depositVerified || !mission.channelId || !mission.voucher) return null
     const voucherAtomic = BigInt(mission.voucher.cumulativeAtomic)
-    if (!claimIsDue(voucherAtomic, BigInt(mission.claimedAtomic ?? '0'), this.fundFlow)) return null
+    const claimTotal = claimableAtomic(usedAtomic(mission), voucherAtomic)
+    if (!claimIsDue(claimTotal, BigInt(mission.claimedAtomic ?? '0'), this.fundFlow)) return null
+
+    // The chain may already hold this claim (it landed, but was never recorded):
+    // take what it says instead of sending it again.
+    if (await this.recordClaimedOnChain(mission, claimTotal)) return null
 
     let txHash: string
     try {
@@ -872,32 +1298,26 @@ export class MissionProductService {
         channelId: mission.channelId,
         voucherAmountAtomic: voucherAtomic,
         signature: mission.voucher.signature,
+        claimTotalAtomic: claimTotal,
       })
       txHash = claimRes.txHash
     } catch (error) {
-      if (this.rail.readEscrowState) {
-        const state = await this.rail.readEscrowState(mission.channelId)
-        if (state && state.claimedAtomic >= voucherAtomic) {
-          mission.claimedAtomic = state.claimedAtomic.toString()
-          if (state.activeAt) mission.escrowActiveAt = new Date(state.activeAt * 1000).toISOString()
-          await this.repo.save(mission)
-          return null
-        }
-      }
+      if (await this.recordClaimedOnChain(mission, claimTotal)) return null
       throw error
     }
     const record: ClaimRecord = {
       txHash,
       explorerUrl: this.rail.explorerTxUrl(txHash) ?? undefined,
-      cumulativeAtomic: voucherAtomic.toString(),
+      cumulativeAtomic: claimTotal.toString(),
       at: now.toISOString(),
       claimedAt: now.toISOString(),
     }
-    mission.claimedAtomic = voucherAtomic.toString()
+    mission.claimedAtomic = claimTotal.toString()
     mission.claims = [...(mission.claims ?? []), record]
     // A claim restarts the escrow's refund timeout.
     mission.escrowActiveAt = record.at
     await this.repo.save(mission)
+    this.record(mission, 'escrow.claim', { txHash, cumulativeAtomic: record.cumulativeAtomic, source: 'backend' })
     this.logger({ level: 'info', msg: 'escrow claim', missionId: mission.id, txHash, cumulativeAtomic: record.cumulativeAtomic })
     return record
   }
@@ -907,52 +1327,14 @@ export class MissionProductService {
     if (!mission.channelId || !mission.voucher) {
       throw new Error('There is no signed voucher to close this trip with')
     }
-    if (mission.iccid) {
-      try {
-        await this.connectivity.refundUnused(mission.iccid)
-      } catch {
-        // The eSIM wallet goes back to the reseller balance later; the USDC refund does not wait for it.
-      }
-    }
-
-    const priceAtomic = usdcToAtomic(mission.destination.pricePerMbUsdc)
-    const meteredAtomic = (BigInt(mission.meteredBytes || '0') * priceAtomic) / 1_000_000n
+    // What was used, never above what the traveler signed. A trip found with
+    // more claimed than used settles at the claimed total (see `settlementFor`).
+    const settlement = await this.settlementFor(mission)
     const voucherAtomic = BigInt(mission.voucher.cumulativeAtomic)
-    const settleAtomic = meteredAtomic > voucherAtomic ? voucherAtomic : meteredAtomic
+    const settleAtomic =
+      settlement.aboveUsageAtomic === 0n && settlement.settleAtomic > voucherAtomic ? voucherAtomic : settlement.settleAtomic
 
-    const outcome = await this.rail.closeChannel(
-      mission.channelId,
-      atomicToRaw(settleAtomic),
-    )
-    if (outcome.kind === 'failed') {
-      if (this.rail.readEscrowState) {
-        const state = await this.rail.readEscrowState(mission.channelId)
-        if (!state?.settled) {
-          throw new Error(`Could not close channel: ${outcome.detail}`)
-        }
-      } else if (!outcome.detail.includes('already settled') && !outcome.detail.includes('already closed')) {
-        throw new Error(`Could not close channel: ${outcome.detail}`)
-      }
-    }
-
-    const settled =
-      (outcome.kind === 'closed' || outcome.kind === 'closed_unverified') && outcome.settledRaw !== undefined
-        ? rawToAtomicFloor(outcome.settledRaw)
-        : settleAtomic
-    const deposit = BigInt(mission.depositAtomic ?? '0')
-    mission.status = 'completed'
-    mission.esimStatus = 'disabled'
-    mission.settlement = 'close'
-    mission.settledUsdc = Number(formatAtomic(settled))
-    mission.refundedUsdc = Number(formatAtomic(deposit > settled ? deposit - settled : 0n))
-    mission.claimedAtomic = settled.toString()
-    if (outcome.kind === 'closed' || outcome.kind === 'closed_unverified') {
-      mission.closeTxHash = outcome.txHash
-      mission.closeExplorerUrl = outcome.explorerUrl
-    }
-    if (reason) mission.autoCloseReason = reason
-    await this.repo.save(mission)
-    this.logger({ level: 'info', msg: 'escrow close', missionId: mission.id, txHash: mission.closeTxHash, reason: reason ?? 'traveler' })
+    await this.closeEscrow(mission, settlement, settleAtomic, reason)
     return {
       txHash: mission.closeTxHash,
       status: 'completed' as const,
@@ -987,6 +1369,7 @@ export class MissionProductService {
       }
       if (voucher && (await this.acceptVoucher(mission, voucher))) {
         await this.repo.save(mission)
+        this.recordVoucher(mission)
       }
       return this.closeWithVoucher(mission)
     })
@@ -998,6 +1381,37 @@ export class MissionProductService {
     return missions
       .filter((m) => m.depositVerified && m.paymentStatus === 'paid' && (m.status === 'active' || m.status === 'paused'))
       .map((m) => m.id)
+  }
+
+  /**
+   * The refund timeout of the escrow this server settles on, as the rail reads
+   * it from the contract; null when it cannot be known, in which case the
+   * timeout-based auto-close is skipped for this pass (never a guessed value).
+   * Also null, with one configuration error logged, when the close margin is
+   * not smaller than the timeout. The rail keeps the timeout once read.
+   */
+  private async escrowTimeoutSeconds(missionId: string): Promise<number | null> {
+    let timeout: number
+    try {
+      if (!this.rail.readTimeoutSeconds) throw new Error('the payment rail does not report the escrow timeout')
+      timeout = await this.rail.readTimeoutSeconds()
+    } catch (error) {
+      this.logger({ level: 'error', msg: 'escrow timeout unknown: skipping the timeout auto-close', missionId, detail: messageOf(error) })
+      return null
+    }
+    if (timeout <= this.fundFlow.closeMarginSeconds) {
+      if (!this.marginErrorLogged) {
+        this.marginErrorLogged = true
+        this.logger({
+          level: 'error',
+          msg: 'ESCROW_CLOSE_MARGIN_SECONDS is not smaller than the escrow timeout: trips are not closed on the timeout',
+          closeMarginSeconds: this.fundFlow.closeMarginSeconds,
+          timeoutSeconds: timeout,
+        })
+      }
+      return null
+    }
+    return timeout
   }
 
   /**
@@ -1015,7 +1429,7 @@ export class MissionProductService {
 
         await this.readProviderUsage(mission)
 
-        const reason = autoCloseReason(mission, this.fundFlow, now, this.timeoutSeconds)
+        const reason = autoCloseReason(mission, usedAtomic(mission), this.fundFlow, now, await this.escrowTimeoutSeconds(missionId))
         if (reason && mission.voucher) {
           const closed = await this.closeWithVoucher(mission, reason)
           result.closeTxHash = closed.txHash

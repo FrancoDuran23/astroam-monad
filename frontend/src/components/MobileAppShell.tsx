@@ -1,5 +1,5 @@
 import React from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import logoSrc from '../assets/logo-night.png'
 import MobileBottomNav from './MobileBottomNav'
 import StarfieldBackground from './StarfieldBackground'
@@ -61,6 +61,11 @@ export default function MobileAppShell({
       {/* Main Content Area */}
       <main className={`relative z-10 flex-1 w-full max-w-4xl mx-auto px-4 sm:px-6 py-6 ${showBottomNav ? 'pb-24 sm:pb-8' : 'pb-6'}`}>
         {children}
+        <div className="mt-8 text-center">
+          <Link to="/terms" className="inline-flex items-center min-h-[44px] px-3 font-mono text-xs text-textsecondary hover:text-white transition-colors">
+            TERMS (DRAFT)
+          </Link>
+        </div>
       </main>
 
       {/* Mobile Bottom Navigation */}

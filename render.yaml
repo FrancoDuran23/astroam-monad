@@ -1,0 +1,35 @@
+# Render blueprint for the AstroAm API (Monad testnet).
+# Public values only. Secrets are sync: false so Render asks for them in the
+# dashboard and they never land in git. See docs/deploy.md.
+services:
+  - type: web
+    name: astroam-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PAYMENT_RAIL
+        value: monad
+      - key: CONNECTIVITY_PROVIDER
+        value: fake
+      - key: ASTROAM_LIVE_ENABLED
+        value: "false"
+      - key: ENABLE_DEMO_TRAFFIC
+        value: "true"
+      # The free plan has no disk: this directory is erased on restart or sleep.
+      - key: DATA_DIR
+        value: /app/data
+      # Secrets and per-deployment values, entered in the Render dashboard.
+      - key: MONAD_ESCROW_ADDRESS
+        sync: false
+      - key: MONAD_OPERATOR_PRIVATE_KEY
+        sync: false
+      - key: CITRUS_API_KEY
+        sync: false
+      - key: CITRUS_WEBHOOK_SECRET
+        sync: false
+      - key: ASTROAM_DEMO_ACCESS_TOKEN
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false

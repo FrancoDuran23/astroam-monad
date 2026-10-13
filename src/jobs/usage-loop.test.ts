@@ -24,7 +24,7 @@ const DEPOSIT_RAW = 50_000_000n;
 const MARKUP_BPS = 15000;
 const USDC_USD_RATE_BPS = 10000;
 const CHANNEL = "C-USAGE-01";
-const CAP_BPS = 1000; // 10% del depósito
+const CAP_BPS = 1000; // 10% of the deposit
 
 type UsageHarness = {
   store: ReturnType<typeof openEsimStore>;
@@ -97,13 +97,13 @@ async function buildHarness(over: { row?: Partial<EsimRecordRow>; chargedMicroUs
   };
 }
 
-test("cap de impago: sin voucher firmado que cubra la acumulación, el eSIM se suspende", async () => {
+test("unpaid cap: without a signed voucher covering the accumulation, the eSIM is suspended", async () => {
   const h = await buildHarness({ chargedMicroUsd: 1_000_000n });
-  // 1 USD cargado → 600 MB equivalentes → expected ≫ 10% del depósito.
+  // 1 USD charged → 600 MB equivalent → expected ≫ 10% of the deposit.
   const eqBytes = equivalentBytes(1_000_000n, MARKUP_BPS, USDC_USD_RATE_BPS, PRICE_PER_MB_RAW);
   const expected = computeExpectedAmountRaw(eqBytes, VOUCHER_PRICE_PER_MIB_RAW);
   const capRaw = (DEPOSIT_RAW * BigInt(CAP_BPS)) / 10_000n;
-  assert.equal(expected > capRaw, true, `el escenario debe quedar sobre el cap: expected ${expected} > cap ${capRaw}`);
+  assert.equal(expected > capRaw, true, `the scenario must end up above the cap: expected ${expected} > cap ${capRaw}`);
 
   h.setVoucher({ kind: "unsigned" });
   const first = await h.loop.runOnce(h.iccid);
@@ -112,7 +112,7 @@ test("cap de impago: sin voucher firmado que cubra la acumulación, el eSIM se s
   assert.equal(h.stamped.some((l) => l.reason === "unpaid_cap_exceeded_suspend"), true);
 });
 
-test("cap de impago: un voucher firmado que cubre la acumulación reanuda el eSIM", async () => {
+test("unpaid cap: a signed voucher covering the accumulation resumes the eSIM", async () => {
   const h = await buildHarness({ chargedMicroUsd: 1_000_000n });
   const eqBytes = equivalentBytes(1_000_000n, MARKUP_BPS, USDC_USD_RATE_BPS, PRICE_PER_MB_RAW);
   const expected = computeExpectedAmountRaw(eqBytes, VOUCHER_PRICE_PER_MIB_RAW);
@@ -122,12 +122,12 @@ test("cap de impago: un voucher firmado que cubre la acumulación reanuda el eSI
   assert.equal(suspended.suspendedByUnpaid, true);
   assert.equal(h.provider.sim(h.iccid).status, "suspended");
 
-  // Segundo tick sin cubrir: sigue suspendido, no re-suspende (transición única).
+  // Second tick still uncovered: stays suspended, does not re-suspend (single transition).
   const still = await h.loop.runOnce(h.iccid);
   assert.equal(still.suspendedByUnpaid, true);
   assert.equal(h.stamped.filter((l) => l.reason === "unpaid_cap_exceeded_suspend").length, 1);
 
-  // La acumulación queda cubierta por un voucher firmado por el monto esperado.
+  // The accumulation is now covered by a voucher signed for the expected amount.
   h.setVoucher({ kind: "signed", envelope: { voucher: { cumulativeAmount: expected.toString() } } });
   const resumed = await h.loop.runOnce(h.iccid);
   assert.equal(resumed.suspendedByUnpaid, false);
@@ -136,7 +136,7 @@ test("cap de impago: un voucher firmado que cubre la acumulación reanuda el eSI
   assert.equal(h.stamped.some((l) => l.reason === "unpaid_covered_resume"), true);
 });
 
-test("dentro del cap no se suspende (un voucher firmado mantiene el acumulado cubierto)", async () => {
+test("within the cap it is not suspended (a signed voucher keeps the cumulative covered)", async () => {
   const h = await buildHarness({ chargedMicroUsd: 1_000_000n });
   const eqBytes = equivalentBytes(1_000_000n, MARKUP_BPS, USDC_USD_RATE_BPS, PRICE_PER_MB_RAW);
   const expected = computeExpectedAmountRaw(eqBytes, VOUCHER_PRICE_PER_MIB_RAW);
@@ -147,7 +147,7 @@ test("dentro del cap no se suspende (un voucher firmado mantiene el acumulado cu
   assert.equal(ok.equivalentBytes, 600_000_000n);
 });
 
-test("skips: fila en closing, defund pendiente o sin fila no tocan ni al proveedor ni al meter", async () => {
+test("skips: a row in closing, a pending defund or no row touch neither the provider nor the meter", async () => {
   const h = await buildHarness();
   h.setVoucher({ kind: "unsigned" });
 
@@ -164,7 +164,7 @@ test("skips: fila en closing, defund pendiente o sin fila no tocan ni al proveed
   assert.equal(noRow.skipped, "no_row");
 });
 
-test("nunca lanza: un error de red en getUsage se loguea y el tick devuelve ceros", async () => {
+test("never throws: a network error in getUsage is logged and the tick returns zeros", async () => {
   const h = await buildHarness();
   const flaky = new FakeProvider();
   const iccid = (await flaky.provisionEsim("flaky-1")).iccid;
@@ -187,7 +187,7 @@ test("nunca lanza: un error de red en getUsage se loguea y el tick devuelve cero
     updatedAt: new Date().toISOString(),
   }));
   flaky.getUsage = async () => {
-    throw new Error("red caída");
+    throw new Error("network down");
   };
   const loop = new UsageLoop({
     provider: flaky,

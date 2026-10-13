@@ -4,6 +4,7 @@ import type { ConnectivityProvider } from '../../providers/connectivity/Connecti
 import { createPaymentRail } from '../../rails/createPaymentRail.ts'
 import type { PaymentRail } from '../../rails/PaymentRail.ts'
 import { FileMissionRepository } from '../persistence/MissionRepository.ts'
+import { FileMissionLog } from '../persistence/MissionLog.ts'
 import { MissionProductService } from '../services/MissionProductService.ts'
 import { fundFlowConfigFromEnv } from '../services/fund-flow.ts'
 
@@ -34,6 +35,7 @@ export function bootProductService(
 
   return new MissionProductService({
     repo,
+    missionLog: new FileMissionLog(env.DATA_DIR),
     connectivity,
     rail,
     hasCitrusReal,

@@ -43,8 +43,8 @@ export function createConnectivityProvider(env: ConnectivityEnv): ConnectivityBu
 
   if (env.CITRUS_API_KEY === undefined || env.CITRUS_API_KEY === "") {
     throw new Error(
-      "Falta CITRUS_API_KEY — generala en el dashboard de Citrus (prefijo rsk_) y agregala al .env " +
-      "antes de usar CONNECTIVITY_PROVIDER=citrus.",
+      "CITRUS_API_KEY is missing — generate it in the Citrus dashboard (rsk_ prefix) and add it to .env " +
+      "before using CONNECTIVITY_PROVIDER=citrus.",
     );
   }
 

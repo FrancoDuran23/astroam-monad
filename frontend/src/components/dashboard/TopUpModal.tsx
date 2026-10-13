@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useMission } from '../../hooks/useMission'
 import WalletDeposit from '../mission/WalletDeposit'
+import PaymentsUnavailable from '../mission/PaymentsUnavailable'
+import { paymentMode } from '../../utils/paymentMode'
 import type { PaymentIntentInfo } from '../../types/mission'
 
 type Props = {
@@ -11,33 +13,22 @@ export default function TopUpModal({ onClose }: Props) {
   const { mission, isDemoMode, caps, createTopUpIntent, confirmTopUpPayment, actionLoading } = useMission()
   const [amount, setAmount] = useState(5)
   const [intent, setIntent] = useState<PaymentIntentInfo | null>(null)
-  const [txHashInput, setTxHashInput] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const simulated = isDemoMode || !caps?.paymentsLive
+  const mode = paymentMode(isDemoMode, caps, intent)
+  const simulated = mode === 'simulated'
+  const blocked = mode === 'blocked'
 
   async function handleStartTopUp() {
     setError(null)
     try {
       if (isDemoMode) {
-        await confirmTopUpPayment(`intent_demo_${Date.now()}`, `0x${Date.now().toString(16)}`, amount)
+        await confirmTopUpPayment(`intent_demo_${Date.now()}`, `demo_topup_${Date.now()}`, amount)
         onClose()
       } else {
         setIntent(await createTopUpIntent(amount))
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start the top-up')
-    }
-  }
-
-  async function handleConfirmTopUp() {
-    if (!intent) return
-    setError(null)
-    try {
-      const txHash = txHashInput.trim() || `0x${Date.now().toString(16)}`
-      await confirmTopUpPayment(intent.intentId, txHash, amount)
-      onClose()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not confirm the top-up')
     }
   }
 
@@ -118,9 +109,11 @@ export default function TopUpModal({ onClose }: Props) {
               </p>
             </div>
 
+            {blocked && <PaymentsUnavailable />}
+
             <button
               type="button"
-              disabled={actionLoading}
+              disabled={actionLoading || blocked}
               onClick={() => void handleStartTopUp()}
               className="w-full py-3.5 rounded-full bg-primaryviolet text-white font-sans font-bold text-sm uppercase tracking-wider shadow-[0_0_24px_rgba(123,92,255,0.5)] hover:bg-primaryviolet-hover disabled:opacity-50 transition-all flex items-center justify-center gap-2"
             >
@@ -128,7 +121,9 @@ export default function TopUpModal({ onClose }: Props) {
               {isDemoMode ? 'CONFIRM TOP-UP (DEMO)' : 'CONTINUE'}
             </button>
           </>
-        ) : intent.evm && !simulated && mission ? (
+        ) : blocked ? (
+          <PaymentsUnavailable />
+        ) : intent.evm && mission ? (
           <WalletDeposit
             missionId={mission.id}
             plan={intent.evm}
@@ -138,43 +133,7 @@ export default function TopUpModal({ onClose }: Props) {
               onClose()
             }}
           />
-        ) : (
-          <div className="flex flex-col gap-4 font-mono text-xs">
-            <div className="p-4 bg-warmneutral rounded-2xl border border-cardborder text-center">
-              <span className="text-textsecondary text-[10px] block mb-1">TOP-UP AMOUNT</span>
-              <span className="font-display text-xl font-bold text-[#B9A6FF]">
-                {intent.amount} {intent.asset}
-              </span>
-              {intent.qr && <img src={intent.qr} alt="Top-up QR code" className="w-36 h-36 mx-auto my-3 object-contain rounded-lg bg-white p-1" />}
-            </div>
-
-            {!simulated && (
-              <div>
-                <label htmlFor="topup-tx" className="block text-[11px] text-textsecondary mb-1">
-                  TRANSACTION HASH
-                </label>
-                <input
-                  id="topup-tx"
-                  type="text"
-                  value={txHashInput}
-                  onChange={(e) => setTxHashInput(e.target.value)}
-                  placeholder="0x…"
-                  className="w-full px-3 py-2 min-h-[44px] rounded-xl border border-[#6B6E9E] bg-warmneutral text-xs text-textprimary focus:outline-none focus:border-primaryviolet"
-                />
-              </div>
-            )}
-
-            <button
-              type="button"
-              disabled={actionLoading || (!simulated && !txHashInput.trim())}
-              onClick={() => void handleConfirmTopUp()}
-              className="w-full py-3 rounded-full bg-tealbrand text-[#04161A] font-bold text-xs uppercase tracking-wider shadow-[0_0_18px_rgba(47,208,221,0.45)] hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-            >
-              <span className={`material-symbols-outlined text-sm ${actionLoading ? 'animate-spin' : ''}`}>{actionLoading ? 'refresh' : 'check_circle'}</span>
-              {simulated ? 'SIMULATE DEPOSIT' : 'CONFIRM TOP-UP'}
-            </button>
-          </div>
-        )}
+        ) : null}
 
         {error && (
           <div role="alert" className="p-3 rounded-xl bg-alerta/10 border border-alerta/30 font-mono text-xs text-alerta">

@@ -46,9 +46,9 @@ export const demoMissionService: MissionService = {
     const iccid = `fake_${randomHex(4)}`
     const mockEsim: PublicEsimInfo = {
       iccid,
-      lpaString: `LPA:1$rsp.citrusmobile.demo$DEMO_${data.destination.id.toUpperCase()}_${Date.now()}`,
+      lpaString: `LPA:1$sample.invalid$ASTROAM-TEST-${data.destination.id.toUpperCase()}`,
       qrCode: `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="%230F172A" rx="16"/><rect x="20" y="20" width="40" height="40" fill="%236941FF"/><rect x="140" y="20" width="40" height="40" fill="%236941FF"/><rect x="20" y="140" width="40" height="40" fill="%236941FF"/><rect x="80" y="80" width="40" height="40" fill="%2300F0FF"/><text x="100" y="180" fill="%2394A3B8" font-size="10" font-family="sans-serif" text-anchor="middle">SIMULATED eSIM</text></svg>`,
-      directInstallUrl: `https://citrusmobile.com/install-demo?iccid=${iccid}`,
+      directInstallUrl: `https://sample.invalid/install?iccid=${iccid}`,
       status: 'active',
       isMock: true,
     }

@@ -1,7 +1,8 @@
-// Close one AstroAmEscrow with no usage beyond what was already claimed: the
-// payee calls close(id, claimed, "0x", claimed) and the rest of the deposit goes
-// back to the traveler in the same transaction (the whole deposit if nothing was
-// claimed). Used to recover a deposit whose mission never activated.
+// Close one AstroAmEscrow (v4) with no usage beyond what was already claimed:
+// the operator calls close(id, claimed, "0x", claimed) and the rest of the
+// deposit goes back to the traveler in the same transaction (the whole deposit
+// if nothing was claimed). Used to recover a deposit whose mission never
+// activated. The key only sends the transaction: it receives nothing.
 //
 //   npm run monad:close-escrow -- 0x<escrowId>           # reads state only
 //   npm run monad:close-escrow -- 0x<escrowId> --send    # sends the tx
@@ -11,8 +12,10 @@ import {
   createWalletClient,
   defineChain,
   formatUnits,
+  getAddress,
   http,
   isAddress,
+  type Address,
   type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -37,9 +40,9 @@ if (!contract || !isAddress(contract)) {
   console.error("MONAD_ESCROW_ADDRESS is missing or not an address.");
   process.exit(1);
 }
-const key = process.env.MONAD_PAYEE_PRIVATE_KEY?.trim();
+const key = process.env.MONAD_OPERATOR_PRIVATE_KEY?.trim();
 if (!key || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
-  console.error("MONAD_PAYEE_PRIVATE_KEY is missing or malformed (the payee is the only account that can close).");
+  console.error("MONAD_OPERATOR_PRIVATE_KEY is missing or malformed (the escrow's operator, or its payee, is who can close).");
   process.exit(1);
 }
 
@@ -52,25 +55,15 @@ const chain = defineChain({
 const account = privateKeyToAccount(key as Hex);
 const publicClient = createPublicClient({ chain, transport: http(MONAD_RPC_URL) });
 
-// The v1 contract (no claim) returns five fields, which the current ABI cannot
-// decode: fall back to its getter so old escrows can still be closed.
-const v1EscrowsAbi = [{
-  type: "function",
-  name: "escrows",
-  stateMutability: "view",
-  inputs: [{ name: "escrowId", type: "bytes32" }],
-  outputs: [
-    { name: "traveler", type: "address" },
-    { name: "openedAt", type: "uint64" },
-    { name: "settled", type: "bool" },
-    { name: "signer", type: "address" },
-    { name: "deposit", type: "uint256" },
-  ],
-}] as const;
-type EscrowFields = readonly [Hex, bigint, boolean, Hex, bigint, bigint?, bigint?];
-const readEscrow = (abi: typeof astroAmEscrowAbi | typeof v1EscrowsAbi) =>
-  publicClient.readContract({ address: contract, abi, functionName: "escrows", args: [escrowId] }) as Promise<EscrowFields>;
-const [traveler, , settled, , deposit, claimed = 0n] = await readEscrow(astroAmEscrowAbi).catch(() => readEscrow(v1EscrowsAbi));
+const [traveler, , settled, , deposit, claimed] = await publicClient.readContract({
+  address: contract,
+  abi: astroAmEscrowAbi,
+  functionName: "escrows",
+  args: [escrowId],
+});
+const readAddress = (functionName: "operator" | "payee") =>
+  publicClient.readContract({ address: contract, abi: astroAmEscrowAbi, functionName }) as Promise<Address>;
+const [operator, payee] = await Promise.all([readAddress("operator"), readAddress("payee")]);
 
 const usdc = (raw: bigint) => `${formatUnits(raw, MONAD_USDC_DECIMALS)} USDC`;
 console.log(`Escrow:   ${escrowId}`);
@@ -78,6 +71,8 @@ console.log(`Traveler: ${traveler}`);
 console.log(`Deposit:  ${usdc(deposit)}`);
 console.log(`Claimed:  ${usdc(claimed)}`);
 console.log(`Settled:  ${settled}`);
+console.log(`Operator: ${operator}`);
+console.log(`Payee:    ${payee}`);
 
 if (/^0x0{40}$/.test(traveler)) {
   console.error("This escrow does not exist on this contract.");
@@ -85,6 +80,10 @@ if (/^0x0{40}$/.test(traveler)) {
 }
 if (settled) {
   console.error("Already settled: nothing to do.");
+  process.exit(1);
+}
+if (account.address !== getAddress(operator) && account.address !== getAddress(payee)) {
+  console.error(`${account.address} is neither the operator nor the payee of this contract: close would revert with NotOperator.`);
   process.exit(1);
 }
 if (!send) {

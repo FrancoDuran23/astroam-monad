@@ -2,8 +2,8 @@
 // when CONNECTIVITY_PROVIDER=citrus and CITRUS_WEBHOOK_SECRET is set. The body
 // parser is `express.raw({ type: "application/json" })` registered BEFORE the
 // app-wide `express.json()`, so this route always sees the RAW body for the
-// HMAC verification and the rest of the app is unaffected (R10: "sin afectar
-// otras rutas").
+// HMAC verification and the rest of the app is unaffected (R10: "without affecting
+// other routes").
 //
 // Handshake: invalid signature -> 401; otherwise 200 regardless of what the
 // handler did with the event (R10 answers 200 even for unknown event types —

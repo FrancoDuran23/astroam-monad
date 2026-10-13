@@ -20,7 +20,7 @@ test("computeBackoffDelayMs is bounded by min(base * 2^attempt, cap)", () => {
   assert.equal(computeBackoffDelayMs(1, { random }), 500);
   // 250 * 2^2 = 1000, exactly RETRY_MAX_DELAY_MS: the cap and the natural
   // growth coincide at the last retry `withRetry` ever sleeps for by
-  // default (review finding, Lote C — the cap used to be unreachable under
+  // default (review finding, Batch C — the cap used to be unreachable under
   // the default 4-attempt loop; it now binds exactly here).
   assert.equal(computeBackoffDelayMs(2, { random }), RETRY_MAX_DELAY_MS);
   // 250 * 2^4 = 4000, must be capped at RETRY_MAX_DELAY_MS
@@ -106,7 +106,7 @@ test("withRetry succeeds after a transient failure", async () => {
   assert.equal(calls, 3);
 });
 
-// --- deadlineMs / attemptTimeoutMs (review finding, Lote C: only sleeps
+// --- deadlineMs / attemptTimeoutMs (review finding, Batch C: only sleeps
 // were bounded before, not the total wall-clock time of a call) ---
 
 test("withRetry throws RetryDeadlineExceededError instead of sleeping once the next delay would exceed the deadline", async () => {
@@ -192,7 +192,7 @@ test("withRetry's attemptTimeoutMs aborts a single hanging attempt and retries",
   assert.equal(calls, 2);
 });
 
-// --- withTimeout / TimeoutError (review finding, Lote D: a standalone,
+// --- withTimeout / TimeoutError (review finding, Batch D: a standalone,
 // no-retry bounded call reused by agent/routes/vouchers.ts) ---
 
 test("withTimeout resolves with fn's value when it settles before the timeout", async () => {

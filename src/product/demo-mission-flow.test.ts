@@ -1,5 +1,5 @@
-// Flujo de demo sin servicios reales (FakeProvider + agente de pagos simulado
-// por misión), como lo levanta `npm run server` con el .env.example.
+// Demo flow with no real services (FakeProvider + a simulated payment agent
+// per mission), as `npm run server` starts it with .env.example.
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { MissionProductService } from './services/MissionProductService.ts'
@@ -7,6 +7,7 @@ import type { MissionRepository } from './persistence/MissionRepository.ts'
 import type { ProductMission } from './types/mission.ts'
 import { FakeRail } from '../rails/FakeRail.ts'
 import { FakeProvider } from '../providers/connectivity/FakeProvider.ts'
+import { escrowIdForMission } from '../shared/monad/voucher.ts'
 
 class MemoryRepo implements MissionRepository {
   private store = new Map<string, ProductMission>()
@@ -66,42 +67,44 @@ async function activeMission(budgetUsdc: number): Promise<string> {
     dailyLimitUsdc: budgetUsdc,
   })
   const intent = await service.createPaymentIntent(id)
-  await service.confirmPayment(id, intent.intentId, 'demo_tx_hash')
+  // One transaction per mission: a hash names a single deposit.
+  await service.confirmPayment(id, intent.intentId, `demo_tx_${id}`)
   await service.activateMission(id)
   return id
 }
 
-test('el depósito abre un canal de pago para la misión', async () => {
+test('the deposit opens a payment channel for the mission', async () => {
   const id = await activeMission(5)
   const mission = await service.getMission(id)
-  assert.match(mission.channelId ?? '', /^0x[0-9a-f]{40}$/)
+  // The mission's own escrow id, as on chain.
+  assert.equal(mission.channelId, escrowIdForMission(id))
 })
 
-test('el tráfico de demo firma vales y cobra la tarifa del destino, sin pausar antes de tiempo', async () => {
-  const id = await activeMission(5) // 5 USDC a 0,0025 USDC/MB = 2.000 MB
+test('demo traffic signs vouchers and charges the destination rate, without pausing early', async () => {
+  const id = await activeMission(5) // 5 USDC at 0.0025 USDC/MB = 2,000 MB
 
   const legs = [300, 700, 800]
   for (const mb of legs) {
     const res = await service.processDemoTraffic(id, mb * 1_000_000)
-    assert.equal(res.voucher.kind, 'signed', `tramo de ${mb} MB sin vale firmado`)
-    assert.equal(res.status, 'active', `la misión se pausó en el tramo de ${mb} MB`)
+    assert.equal(res.voucher.kind, 'signed', `no signed voucher for the ${mb} MB leg`)
+    assert.equal(res.status, 'active', `the mission paused on the ${mb} MB leg`)
   }
 
-  const last = await service.processDemoTraffic(id, 600 * 1_000_000) // 2.400 MB > 2.000
+  const last = await service.processDemoTraffic(id, 600 * 1_000_000) // 2,400 MB > 2,000
   assert.equal(last.voucher.kind, 'unsigned')
   assert.equal(last.status, 'paused')
 })
 
-test('dos misiones no se pisan los vales entre sí', async () => {
+test('two missions do not overwrite each other vouchers', async () => {
   const a = await activeMission(5)
   const b = await activeMission(5)
 
   await service.processDemoTraffic(a, 1_000 * 1_000_000)
   const res = await service.processDemoTraffic(b, 300 * 1_000_000)
-  assert.equal(res.voucher.kind, 'signed', 'la segunda misión no debería ver el vale de la primera')
+  assert.equal(res.voucher.kind, 'signed', 'the second mission should not see the voucher of the first')
 })
 
-test('la eSIM de demo trae una imagen de QR válida', async () => {
+test('the demo eSIM comes with a valid QR image', async () => {
   const id = await activeMission(5)
   const mission = await service.getMission(id)
   const qr = mission.esim?.qrCode ?? ''
@@ -118,11 +121,11 @@ async function paidMission(budgetUsdc: number): Promise<string> {
     dailyLimitUsdc: budgetUsdc,
   })
   const intent = await service.createPaymentIntent(id)
-  await service.confirmPayment(id, intent.intentId, 'demo_tx_hash')
+  await service.confirmPayment(id, intent.intentId, `demo_tx_${id}`)
   return id
 }
 
-test('cancelar una misión pagada sin activar devuelve todo el depósito', async () => {
+test('cancelling a paid mission before activation refunds the whole deposit', async () => {
   const id = await paidMission(5)
   const res = await service.cancelMission(id)
   assert.equal(res.status, 'cancelled')
@@ -132,7 +135,7 @@ test('cancelar una misión pagada sin activar devuelve todo el depósito', async
   assert.equal(mission.settledUsdc, 0)
 })
 
-test('cancelar dos veces es idempotente', async () => {
+test('cancelling twice is idempotent', async () => {
   const id = await paidMission(5)
   await service.cancelMission(id)
   const again = await service.cancelMission(id)
@@ -140,12 +143,12 @@ test('cancelar dos veces es idempotente', async () => {
   assert.equal(again.refundedUsdc, 5)
 })
 
-test('no se cancela una misión ya activa: se termina para liquidar lo usado', async () => {
+test('an already active mission cannot be cancelled: it is ended to settle what was used', async () => {
   const id = await activeMission(5)
   await assert.rejects(service.cancelMission(id), /already started/)
 })
 
-test('no se cancela una misión sin depósito confirmado', async () => {
+test('a mission without a confirmed deposit cannot be cancelled', async () => {
   const { id } = await service.createMission({
     destination: BRASIL,
     startDate: '2026-10-01',

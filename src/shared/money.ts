@@ -14,7 +14,7 @@ const NON_NEGATIVE_INTEGER_RE = /^(0|[1-9]\d*)$/;
  * be `0`). Returns `undefined` for anything else instead of throwing — a raw
  * `BigInt(userInput)` call throws a `SyntaxError` on malformed input, which is
  * exactly how an unvalidated `?cumulativeBytes=abc` used to turn into an
- * uncaught 500 (review finding, Lote D). Callers decide how to turn
+ * uncaught 500 (review finding, Batch D). Callers decide how to turn
  * `undefined` into a 400.
  */
 export function parseNonNegativeIntegerRaw(value: string): bigint | undefined {

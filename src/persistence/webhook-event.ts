@@ -8,7 +8,7 @@
 // - `markProcessed(id)` compacts the file, stamping `processedAt`. The volume
 //   is tiny (one line per Citrus event), so a full rewrite is the simplest
 //   reliable way to make the marker durable (crash between 200 and processing
-//   must still replay the event, R10: "reprocesar los no marcados processed_at").
+//   must still replay the event, R10: "reprocess the ones not marked processed_at").
 // - `open()` replays the file: `seen` has every id (dedup), `unprocessed()`
 //   yields the records whose `processedAt` is null (reprocess at boot).
 

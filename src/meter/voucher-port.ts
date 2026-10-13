@@ -1,22 +1,22 @@
 /**
- * Puerto del medidor hacia el agente de pagos: `POST /vouchers` (vales
- * acumulativos sobre el canal de pago de una sola vía del riel en uso).
+ * The meter's port to the payment agent: `POST /vouchers` (cumulative
+ * vouchers over the one-way payment channel of the rail in use).
  *
- * Es la única costura entre la capa de conectividad/medidor y la capa de
- * pagos (src/rails/PaymentRail.ts): un request HTTP con el
- * mensaje 1 (M1), una respuesta con el mensaje 2 (M2). Los schemas y el
- * vocabulario de `reason` NO se duplican acá — se reusan de `src/shared/`
+ * It is the only seam between the connectivity/meter layer and the payment
+ * layer (src/rails/PaymentRail.ts): one HTTP request carrying
+ * message 1 (M1), one response carrying message 2 (M2). The schemas and the
+ * `reason` vocabulary are NOT duplicated here; they are reused from `src/shared/`
  * (`messages.ts`, `reasons.ts`, `money.ts`, `retry.ts`).
  *
- * Tres piezas:
- * - `createHttpVoucherPort`: un intento contra el agente real (auth con
- *   `X-Gateway-Token`, M1 validado antes de salir, M2 validado al volver).
- * - `withVoucherRetry`: decorador que reintenta SOLO lo reintentable
- *   (`retryable: true` en M2, o una falla de transporte), con el deadline
- *   total acotado por FT-R3. Un `retryable: false` jamás se reintenta.
- * - `createInMemoryVoucherPort`: doble offline que imita las reglas del
- *   agente (idempotencia por monto acumulado, agotamiento contra depósito)
- *   para la demo y los tests, sin red.
+ * Three pieces:
+ * - `createHttpVoucherPort`: one attempt against the real agent (auth with
+ *   `X-Gateway-Token`, M1 validated before sending, M2 validated on return).
+ * - `withVoucherRetry`: decorator that retries ONLY what is retryable
+ *   (`retryable: true` in M2, or a transport failure), with the total
+ *   deadline bounded by FT-R3. A `retryable: false` is never retried.
+ * - `createInMemoryVoucherPort`: offline double that mimics the agent's
+ *   rules (idempotency by cumulative amount, exhaustion against the deposit)
+ *   for the demo and tests, with no network.
  */
 
 import { createHash } from "node:crypto";
@@ -32,17 +32,17 @@ import { computeExpectedAmountRaw } from "../shared/money.ts";
 import { RetryDeadlineExceededError, TimeoutError, withRetry, type RetryOptions } from "../shared/retry.ts";
 import type { Network } from "../shared/network.ts";
 
-/** Puerto que consume `IntegratedMeterService`. Devuelve SIEMPRE un sobre M2
- * válido (firmado o no firmado); cualquier otra cosa (red caída, 401, 400,
- * cuerpo que no es M2) es un `VoucherTransportError`. */
+/** Port consumed by `IntegratedMeterService`. ALWAYS returns a valid M2
+ * envelope (signed or unsigned); anything else (network down, 401, 400,
+ * a body that is not M2) is a `VoucherTransportError`. */
 export type VoucherPort = {
   requestVoucher(m1: Message1): Promise<Message2>;
 };
 
-/** Falla que NO es un resultado de negocio del agente: transporte, auth
- * (401), schema (400) o una respuesta que no respeta el contrato M2.
- * `retryable` distingue "preguntá de nuevo" (red, 5xx) de "no tiene sentido
- * reintentar" (token mal configurado, M1 inválido). */
+/** A failure that is NOT a business result from the agent: transport, auth
+ * (401), schema (400) or a response that breaks the M2 contract.
+ * `retryable` tells "ask again" (network, 5xx) apart from "retrying makes no
+ * sense" (misconfigured token, invalid M1). */
 export class VoucherTransportError extends Error {
   readonly retryable: boolean;
   readonly httpStatus: number | undefined;
@@ -56,27 +56,27 @@ export class VoucherTransportError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Armado del mensaje 1
+// Building message 1
 // ---------------------------------------------------------------------------
 
 export type MeterReadingInput = {
   sessionId: string;
-  /** Id del canal de pago, como lo formatea el riel en uso. */
+  /** Payment channel id, as formatted by the rail in use. */
   channel: string;
   network: Network;
-  /** Bytes acumulados desde la apertura del canal (VE-R4), nunca un delta. */
+  /** Bytes accumulated since the channel opened (VE-R4), never a delta. */
   cumulativeBytes: number;
-  /** `PRICE_PER_MIB_RAW` — el MISMO valor que usa el agente (CF-R2). */
+  /** `PRICE_PER_MIB_RAW`: the SAME value the agent uses (CF-R2). */
   pricePerMibRaw: bigint;
   meterReadingId: string;
   observedAt: Date;
 };
 
 /**
- * Arma el M1 de una lectura. `cumulativeAmount` sale de la MISMA función
- * pura que usa el agente para su contraverificación (`computeExpectedAmountRaw`,
- * AC-R2 / S1-R5): el gateway es la autoridad del monto, pero si el precio o
- * la fórmula difieren el agente responde `amount_rejected`.
+ * Builds the M1 for a reading. `cumulativeAmount` comes from the SAME pure
+ * function the agent uses for its cross-check (`computeExpectedAmountRaw`,
+ * AC-R2 / S1-R5): the gateway is the authority on the amount, but if the price
+ * or the formula differ the agent answers `amount_rejected`.
  */
 export function buildMessage1(input: MeterReadingInput): Message1 {
   return {
@@ -93,19 +93,19 @@ export function buildMessage1(input: MeterReadingInput): Message1 {
 }
 
 // ---------------------------------------------------------------------------
-// Cliente HTTP real
+// Real HTTP client
 // ---------------------------------------------------------------------------
 
-/** Tope por request HTTP. Menor que el deadline total para que entren al
- * menos un par de intentos dentro de `METER_REPORT_INTERVAL_MS`. */
+/** Cap per HTTP request. Lower than the total deadline so that at least a
+ * couple of attempts fit within `METER_REPORT_INTERVAL_MS`. */
 export const VOUCHER_REQUEST_TIMEOUT_MS_DEFAULT = 4_000;
 
 export type HttpVoucherPortOptions = {
-  /** URL completa del endpoint, ej. `http://127.0.0.1:8081/vouchers`. */
+  /** Full endpoint URL, e.g. `http://127.0.0.1:8081/vouchers`. */
   url: string;
-  /** El mismo secreto que el agente lee de `GATEWAY_TOKEN` (VE-R1). */
+  /** The same secret the agent reads from `GATEWAY_TOKEN` (VE-R1). */
   gatewayToken: string;
-  /** Inyectable para tests. @default globalThis.fetch */
+  /** Injectable for tests. @default globalThis.fetch */
   fetch?: typeof fetch;
   /** @default VOUCHER_REQUEST_TIMEOUT_MS_DEFAULT */
   requestTimeoutMs?: number;
@@ -119,19 +119,19 @@ function describeErrorBody(body: unknown): string {
   if (typeof body === "object" && body !== null && "error" in body && typeof body.error === "string") {
     return body.error;
   }
-  return "sin detalle";
+  return "no detail";
 }
 
 /**
- * Un único intento contra `POST /vouchers`. Mapeo de respuestas (FT-R5: el
- * status HTTP solo dice "¿puedo preguntar de nuevo?"):
- * - `200` / `503` con cuerpo M2 válido → se devuelve el M2 tal cual
- *   (firmado, o no firmado con su `retryable` explícito — FT-R1).
- * - `401` (token) / `400` (schema) → `VoucherTransportError` NO reintentable:
- *   es configuración o un bug, reintentar igual daría lo mismo.
- * - otro `5xx`, o `503` sin M2 (proxy) → reintentable.
- * - otro `4xx`, o `200` sin M2 válido → NO reintentable (contrato roto).
- * - error de red / timeout → reintentable.
+ * A single attempt against `POST /vouchers`. Response mapping (FT-R5: the
+ * HTTP status only says "may I ask again?"):
+ * - `200` / `503` with a valid M2 body → the M2 is returned as is
+ *   (signed, or unsigned with its explicit `retryable`, FT-R1).
+ * - `401` (token) / `400` (schema) → NON-retryable `VoucherTransportError`:
+ *   it is configuration or a bug, retrying would give the same result.
+ * - any other `5xx`, or `503` without M2 (proxy) → retryable.
+ * - any other `4xx`, or `200` without a valid M2 → NOT retryable (broken contract).
+ * - network error / timeout → retryable.
  */
 export function createHttpVoucherPort(options: HttpVoucherPortOptions): VoucherPort {
   const fetchImpl = options.fetch ?? globalThis.fetch;
@@ -139,12 +139,12 @@ export function createHttpVoucherPort(options: HttpVoucherPortOptions): VoucherP
 
   return {
     async requestVoucher(m1) {
-      // Validamos el M1 acá con el schema compartido: un M1 inválido es un
-      // bug del medidor, mejor detectarlo sin gastar un round-trip (y sin
-      // reintentar un 400 seguro).
+      // Validate M1 here with the shared schema: an invalid M1 is a meter
+      // bug, better to catch it without spending a round-trip (and without
+      // retrying a sure 400).
       const parsedM1 = message1Schema.safeParse(m1);
       if (!parsedM1.success) {
-        throw new VoucherTransportError(`M1 inválido: ${parsedM1.error.message}`, { retryable: false });
+        throw new VoucherTransportError(`invalid M1: ${parsedM1.error.message}`, { retryable: false });
       }
 
       let response: Response;
@@ -159,7 +159,7 @@ export function createHttpVoucherPort(options: HttpVoucherPortOptions): VoucherP
           signal: AbortSignal.timeout(requestTimeoutMs),
         });
       } catch (error) {
-        throw new VoucherTransportError(`POST /vouchers falló en transporte: ${messageOf(error)}`, {
+        throw new VoucherTransportError(`POST /vouchers failed in transport: ${messageOf(error)}`, {
           retryable: true,
         });
       }
@@ -175,25 +175,25 @@ export function createHttpVoucherPort(options: HttpVoucherPortOptions): VoucherP
       if (status === 200 || status === 503) {
         const parsedM2 = message2Schema.safeParse(body);
         if (parsedM2.success) return parsedM2.data;
-        throw new VoucherTransportError(`respuesta HTTP ${status} no es un M2 válido`, {
+        throw new VoucherTransportError(`HTTP ${status} response is not a valid M2`, {
           retryable: status === 503,
           httpStatus: status,
         });
       }
 
       if (status === 401) {
-        throw new VoucherTransportError(`agente rechazó el token (401): revisar GATEWAY_TOKEN — ${describeErrorBody(body)}`, {
+        throw new VoucherTransportError(`agent rejected the token (401): check GATEWAY_TOKEN — ${describeErrorBody(body)}`, {
           retryable: false,
           httpStatus: status,
         });
       }
       if (status === 400) {
-        throw new VoucherTransportError(`agente rechazó el M1 (400): ${describeErrorBody(body)}`, {
+        throw new VoucherTransportError(`agent rejected the M1 (400): ${describeErrorBody(body)}`, {
           retryable: false,
           httpStatus: status,
         });
       }
-      throw new VoucherTransportError(`respuesta HTTP inesperada ${status} de POST /vouchers`, {
+      throw new VoucherTransportError(`unexpected HTTP ${status} response from POST /vouchers`, {
         retryable: status >= 500,
         httpStatus: status,
       });
@@ -202,17 +202,17 @@ export function createHttpVoucherPort(options: HttpVoucherPortOptions): VoucherP
 }
 
 // ---------------------------------------------------------------------------
-// Reintentos acotados
+// Bounded retries
 // ---------------------------------------------------------------------------
 
-/** FT-R3: el tiempo total (intentos + esperas) debe quedar por debajo de
- * `METER_REPORT_INTERVAL_MS` (10s por defecto en el agente). */
+/** FT-R3: the total time (attempts + waits) must stay below
+ * `METER_REPORT_INTERVAL_MS` (10s by default in the agent). */
 export const VOUCHER_RETRY_DEADLINE_MS_DEFAULT = 10_000;
 
 export type VoucherRetryOptions = Omit<RetryOptions, "isRetryable">;
 
-/** Transporta un M2 `retryable: true` a través de `withRetry` (que solo
- * reintenta ante un throw). Interno a este módulo. */
+/** Carries a `retryable: true` M2 through `withRetry` (which only retries
+ * on a throw). Internal to this module. */
 class RetryableEnvelope extends Error {
   readonly envelope: Message2;
 
@@ -232,17 +232,17 @@ function isRetryableVoucherError(error: unknown): boolean {
 }
 
 /**
- * Envuelve cualquier `VoucherPort` con `withRetry` (backoff exponencial con
- * jitter, `shared/retry.ts`). Reintenta SOLO:
- * - un M2 no firmado con `retryable: true` (`signer_unavailable`,
+ * Wraps any `VoucherPort` with `withRetry` (exponential backoff with
+ * jitter, `shared/retry.ts`). Retries ONLY:
+ * - an unsigned M2 with `retryable: true` (`signer_unavailable`,
  *   `upstream_unavailable`, `internal_error`);
- * - un `VoucherTransportError` reintentable o un `TimeoutError`.
+ * - a retryable `VoucherTransportError` or a `TimeoutError`.
  *
- * Nunca reintenta un M2 firmado ni un `retryable: false` (FT-R1: la rama del
- * gateway es `if (!retryable) cut(); else backoff();`). Si se agotan los
- * intentos con un M2 reintentable, devuelve ese último M2 (el llamador ve el
- * `reason` real, también si lo cortó el deadline); si se agotan con una
- * falla de transporte, relanza.
+ * It never retries a signed M2 or a `retryable: false` (FT-R1: the gateway
+ * branch is `if (!retryable) cut(); else backoff();`). If the attempts run out
+ * with a retryable M2, it returns that last M2 (the caller sees the real
+ * `reason`, also when the deadline cut it short); if they run out with a
+ * transport failure, it rethrows.
  */
 export function withVoucherRetry(port: VoucherPort, options: VoucherRetryOptions = {}): VoucherPort {
   return {
@@ -266,8 +266,8 @@ export function withVoucherRetry(port: VoucherPort, options: VoucherRetryOptions
         );
       } catch (error) {
         if (error instanceof RetryableEnvelope) return error.envelope;
-        // El deadline cortó antes de otro intento: el último M2 reintentable
-        // visto describe mejor la situación que el error del deadline.
+        // The deadline cut in before another attempt: the last retryable M2
+        // seen describes the situation better than the deadline error.
         if (error instanceof RetryDeadlineExceededError && lastRetryable !== undefined) return lastRetryable;
         throw error;
       }
@@ -275,7 +275,7 @@ export function withVoucherRetry(port: VoucherPort, options: VoucherRetryOptions
   };
 }
 
-/** Composición por defecto para producción: HTTP real + reintentos. */
+/** Default composition for production: real HTTP + retries. */
 export function createAgentVoucherPort(
   options: HttpVoucherPortOptions & { retry?: VoucherRetryOptions },
 ): VoucherPort {
@@ -283,27 +283,27 @@ export function createAgentVoucherPort(
 }
 
 // ---------------------------------------------------------------------------
-// Doble offline (demo / tests)
+// Offline double (demo / tests)
 // ---------------------------------------------------------------------------
 
 export type InMemoryVoucherPortOptions = {
-  /** Depósito del canal en raw units (1e-7 USDC). Una función se lee en
-   * cada pedido, para que una recarga del canal se refleje sin recrear el doble. */
+  /** Channel deposit in raw units (1e-7 USDC). A function is read on
+   * each request, so a channel top-up is reflected without recreating the double. */
   depositRaw: bigint | (() => bigint);
-  /** Etiqueta para la firma falsa determinística. NO es un secreto. */
+  /** Label for the deterministic fake signature. NOT a secret. */
   seed?: string;
   now?: () => Date;
 };
 
 /**
- * Imita las reglas de negocio de `agent/routes/vouchers.ts` sin red ni
- * disco: igual al mayor firmado → `reused: true`; menor → `stale_reading`;
- * por encima del depósito → `channel_exhausted`; mayor → vale nuevo. La
- * firma es un hash determinístico (como ed25519, RFC 8032), NUNCA una firma
- * real. Los sobres se construyen/validan con los schemas compartidos, así
- * el doble no puede emitir algo que el agente real no emitiría.
+ * Mimics the business rules of `agent/routes/vouchers.ts` with no network or
+ * disk: equal to the highest signed → `reused: true`; lower → `stale_reading`;
+ * above the deposit → `channel_exhausted`; higher → new voucher. The
+ * signature is a deterministic hash (shaped like ed25519, RFC 8032), NEVER a
+ * real signature. Envelopes are built/validated with the shared schemas, so
+ * the double cannot emit anything the real agent would not.
  *
- * No recalcula guardrails (AC-R2/AC-R7): eso lo cubren los tests del agente.
+ * It does not recompute guardrails (AC-R2/AC-R7): the agent's tests cover that.
  */
 export function createInMemoryVoucherPort(options: InMemoryVoucherPortOptions): VoucherPort {
   const seed = options.seed ?? "meter-demo-fake-voucher";
@@ -336,7 +336,7 @@ export function createInMemoryVoucherPort(options: InMemoryVoucherPortOptions): 
     async requestVoucher(m1) {
       const channel = m1.channel;
       if (channel === undefined) {
-        throw new VoucherTransportError("channel es obligatorio en POST /vouchers (VE-R5)", {
+        throw new VoucherTransportError("channel is required in POST /vouchers (VE-R5)", {
           retryable: false,
           httpStatus: 400,
         });

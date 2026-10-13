@@ -62,7 +62,7 @@ test("message1Schema rejects a channel id with characters no rail produces", () 
   assert.equal(result.success, false);
 });
 
-test("message1Schema rejects a leading-zero cumulativeAmount (review finding, Lote C)", () => {
+test("message1Schema rejects a leading-zero cumulativeAmount (review finding, Batch C)", () => {
   const result = message1Schema.safeParse({ ...canonicalMessage1, cumulativeAmount: "007" });
   assert.equal(result.success, false);
 });
@@ -72,7 +72,7 @@ test("message1Schema accepts \"0\" as cumulativeAmount", () => {
   assert.equal(result.success, true);
 });
 
-test("message1Schema rejects a cumulativeAmount above the i128 maximum (review finding, Lote C)", () => {
+test("message1Schema rejects a cumulativeAmount above the i128 maximum (review finding, Batch C)", () => {
   const tooLarge = (2n ** 127n).toString(); // one past 2**127 - 1
   const result = message1Schema.safeParse({ ...canonicalMessage1, cumulativeAmount: tooLarge });
   assert.equal(result.success, false);
@@ -84,12 +84,12 @@ test("message1Schema accepts exactly the i128 maximum as cumulativeAmount", () =
   assert.equal(result.success, true);
 });
 
-test("message1Schema rejects an unknown top-level key (VE-R2, review finding Lote C: .strict())", () => {
+test("message1Schema rejects an unknown top-level key (VE-R2, review finding Batch C: .strict())", () => {
   const result = message1Schema.safeParse({ ...canonicalMessage1, extraField: "unexpected" });
   assert.equal(result.success, false);
 });
 
-test("message1Schema accepts observedAt with a non-UTC offset (review finding, Lote C)", () => {
+test("message1Schema accepts observedAt with a non-UTC offset (review finding, Batch C)", () => {
   const result = message1Schema.safeParse({
     ...canonicalMessage1,
     observedAt: "2026-09-17T11:03:11.204+03:00",

@@ -126,8 +126,8 @@ export function useMission() {
     }
   }
 
-  // `target`: la misión recién creada. El estado `mission` de este render
-  // todavía no la tiene cuando se llama justo después de createMission.
+  // `target`: the mission just created. The `mission` state of this render
+  // does not have it yet when called right after createMission.
   const createPaymentIntent = async (target?: Mission): Promise<PaymentIntentInfo> => {
     const current = target ?? mission
     if (!current) throw new Error('No active mission')
@@ -269,7 +269,7 @@ export function useMission() {
         setEvents(newState.events)
         return {
           status: 'completed',
-          txHash: `demo_close_${Date.now().toString(16)}`,
+          txHash: `demo_close_${Date.now()}`,
           settledUsdc: mission.consumedUsdc,
           refundedUsdc: mission.balanceUsdc,
         }
@@ -298,6 +298,39 @@ export function useMission() {
       return res
     } finally {
       setActionLoading(false)
+    }
+  }
+
+  /**
+   * The traveler takes the unspent balance back from the contract after its
+   * timeout. The refund is on the chain before the backend hears about it, so a
+   * backend that cannot be reached never turns it into an error.
+   */
+  const withdrawAfterTimeout = async (
+    hooks?: Parameters<typeof import('../chain/monad').refundEscrow>[1],
+  ): Promise<{ result: FinishResult; backendNotified: boolean }> => {
+    if (!mission || isDemoMode) throw new Error('No on-chain trip to withdraw from')
+    const { loadRefundTarget, refundEscrow } = await import('../chain/monad')
+    const target = loadRefundTarget(mission.id)
+    if (!target) throw new Error('This browser does not hold the escrow details for this trip.')
+    const outcome = await refundEscrow(target, hooks)
+    const result: FinishResult = {
+      status: 'completed',
+      txHash: outcome.txHash,
+      explorerUrl: outcome.explorerUrl,
+      closeKind: 'timeout_refund',
+      settledUsdc: mission.consumedUsdc,
+      refundedUsdc: outcome.refundedUsdc,
+      wallet: { address: outcome.traveler, beforeUsdc: outcome.beforeUsdc, afterUsdc: outcome.afterUsdc },
+    }
+    try {
+      // A trip that never started is cancelled; one that ran is finished.
+      if (mission.status === 'paid') await apiMissionService.cancelMission(mission.id)
+      else await apiMissionService.finishMission(mission.id)
+      setMission(await apiMissionService.getMission(mission.id))
+      return { result, backendNotified: true }
+    } catch {
+      return { result, backendNotified: false }
     }
   }
 
@@ -392,6 +425,7 @@ export function useMission() {
     togglePause,
     finish,
     cancel,
+    withdrawAfterTimeout,
     simulate,
     reset,
   }
