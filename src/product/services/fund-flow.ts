@@ -33,8 +33,6 @@ export type FundFlowConfig = {
   tripEndGraceSeconds: number;
 };
 
-export const DEFAULT_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
-
 export const DEFAULT_FUND_FLOW: FundFlowConfig = {
   trancheCents: 250,
   minFundCents: 50,
@@ -112,7 +110,9 @@ export type AutoCloseReason = NonNullable<ProductMission["autoCloseReason"]>;
 
 /**
  * Why the backend should close this trip by itself now, or null to leave it
- * open. `timeoutSeconds` is the escrow's refund timeout. `usedAtomic` is what
+ * open. `timeoutSeconds` is the escrow's refund timeout as the contract
+ * reports it, or null when it could not be read: without it (or when the
+ * margin is not smaller than it) a trip is never closed on the timeout. `usedAtomic` is what
  * the trip has used, the figure a claim and a close settle: the deposit is
  * spent when the usage reaches it. A voucher alone never decides that, it is
  * a ceiling the app signs ahead of usage.
@@ -122,7 +122,7 @@ export function autoCloseReason(
   usedAtomic: bigint,
   config: FundFlowConfig,
   now: Date,
-  timeoutSeconds: number,
+  timeoutSeconds: number | null,
 ): AutoCloseReason | null {
   const nowMs = now.getTime();
   const deposit = BigInt(mission.depositAtomic ?? "0");
@@ -134,7 +134,12 @@ export function autoCloseReason(
   }
 
   const activeAt = Date.parse(mission.escrowActiveAt ?? "");
-  if (Number.isFinite(activeAt) && nowMs >= activeAt + (timeoutSeconds - config.closeMarginSeconds) * 1000) {
+  if (
+    timeoutSeconds !== null &&
+    timeoutSeconds > config.closeMarginSeconds &&
+    Number.isFinite(activeAt) &&
+    nowMs >= activeAt + (timeoutSeconds - config.closeMarginSeconds) * 1000
+  ) {
     return "timeout_near";
   }
 

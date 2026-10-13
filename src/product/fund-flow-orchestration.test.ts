@@ -54,12 +54,11 @@ after(() => {
 beforeEach(() => {
   clock = new Date("2026-10-05T12:00:00Z");
   provider = new FakeProvider();
-  rail = new FakeRail({ now: () => clock });
+  rail = new FakeRail({ now: () => clock, timeoutSeconds: 7 * 24 * 3600 });
   service = new MissionProductService({
     repo: new MemoryRepo(),
     connectivity: provider,
     rail,
-    timeoutSeconds: 7 * 24 * 3600, // 7 days
     logger: () => {},
   });
 });

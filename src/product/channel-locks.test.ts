@@ -49,7 +49,6 @@ beforeEach(() => {
     repo: new MemoryRepo(),
     connectivity: provider,
     rail,
-    timeoutSeconds: 7 * 24 * 3600,
     logger: () => {},
   });
 });

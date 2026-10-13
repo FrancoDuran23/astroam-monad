@@ -23,6 +23,7 @@ import { buildUnsigned, message2SignedSchema, type Message2 } from "../shared/me
 import type { Network } from "../shared/network.ts";
 import { atomicToRaw, rawToAtomicCeil, rawToAtomicFloor, usdcToAtomic } from "../shared/monad/amounts.ts";
 import { escrowIdForMission, recoverVoucherSigner, voucherDomain, VOUCHER_TYPES } from "../shared/monad/voucher.ts";
+import { DEFAULT_ESCROW_TIMEOUT_SECONDS } from "../shared/monad/constants.ts";
 import type {
   CloseOutcome,
   DepositConfirmation,
@@ -44,6 +45,8 @@ export type FakeRailOptions = {
    */
   payTo?: string;
   now?: () => Date;
+  /** The simulated contract's refund timeout, seconds. Default: the deploy default, 30 days. */
+  timeoutSeconds?: number;
 };
 
 /** USDC (number) to raw units (1e-7 USDC). */
@@ -217,12 +220,14 @@ export class FakeRail implements PaymentRail {
   /** The session key the traveler's app would hold, per channel. */
   private readonly sessionKeys = new Map<string, Hex>();
   private readonly now: () => Date;
+  private readonly timeoutSeconds: number;
   private seq = 0;
 
   constructor(options: FakeRailOptions = {}) {
     this.network = options.network ?? "demo:local";
     this.payTo = (options.payTo ?? `0x${hex("astroam-demo-recipient", 20)}`) as Address;
     this.now = options.now ?? (() => new Date());
+    this.timeoutSeconds = options.timeoutSeconds ?? DEFAULT_ESCROW_TIMEOUT_SECONDS;
     this.escrow = new FakeEscrow(FAKE_CHAIN_ID, this.payTo, this.now);
   }
 
@@ -454,6 +459,10 @@ export class FakeRail implements PaymentRail {
       settled: escrow.settled,
       activeAt: escrow.lastActivityAt,
     };
+  }
+
+  async readTimeoutSeconds(): Promise<number> {
+    return this.timeoutSeconds;
   }
 
   getClaimedAtomic(channelId: string): bigint {

@@ -165,6 +165,21 @@ export class MonadRail implements PaymentRail {
     this.book = new VoucherBook(path.join(opts.dataDir, `monad-vouchers-${opts.escrow.toLowerCase()}.json`));
   }
 
+  /** The contract's `timeoutSeconds()`. Immutable, so it is read once and kept. */
+  private timeoutSeconds?: number;
+
+  async readTimeoutSeconds(): Promise<number> {
+    if (this.timeoutSeconds === undefined) {
+      const raw = (await this.client.readContract({
+        address: this.opts.escrow,
+        abi: astroAmEscrowAbi,
+        functionName: "timeoutSeconds",
+      })) as bigint;
+      this.timeoutSeconds = Number(raw);
+    }
+    return this.timeoutSeconds;
+  }
+
   private async readEscrow(escrowId: Hex): Promise<OnChainEscrow> {
     const [traveler, openedAt, settled, signer, deposit, claimed, lastActivityAt] = (await this.client.readContract({
       address: this.opts.escrow,

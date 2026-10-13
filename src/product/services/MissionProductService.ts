@@ -20,7 +20,6 @@ import {
   type FundFlowConfig,
   type AutoCloseReason,
   DEFAULT_FUND_FLOW,
-  DEFAULT_TIMEOUT_SECONDS,
 } from './fund-flow.ts'
 import { isWildcardOrigin } from '../api/cors.ts'
 
@@ -138,7 +137,6 @@ export type MissionProductServiceOptions = {
   rail: PaymentRail
   hasCitrusReal?: boolean
   fundFlow?: FundFlowConfig
-  timeoutSeconds?: number
   logger?: (line: Record<string, unknown>) => void
   /** Clock of the rail readiness cache, in milliseconds. Injectable for tests. */
   now?: () => number
@@ -151,10 +149,10 @@ export class MissionProductService {
   private rail: PaymentRail
   private hasCitrusReal: boolean
   private fundFlow: FundFlowConfig
-  private timeoutSeconds: number
   private logger: (line: Record<string, unknown>) => void
   private now: () => number
   private locks = createChannelMutex()
+  private marginErrorLogged = false
   /** Last answer of the rail's readiness check, shared by callers until it expires. */
   private railCheck?: { answer: Promise<Readiness>; expiresAt: number }
 
@@ -169,7 +167,6 @@ export class MissionProductService {
     this.rail = options.rail
     this.hasCitrusReal = options.hasCitrusReal ?? false
     this.fundFlow = options.fundFlow ?? DEFAULT_FUND_FLOW
-    this.timeoutSeconds = options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS
     this.logger = options.logger ?? ((line) => console.log(JSON.stringify(line)))
     this.now = options.now ?? (() => Date.now())
   }
@@ -1387,6 +1384,37 @@ export class MissionProductService {
   }
 
   /**
+   * The refund timeout of the escrow this server settles on, as the rail reads
+   * it from the contract; null when it cannot be known, in which case the
+   * timeout-based auto-close is skipped for this pass (never a guessed value).
+   * Also null, with one configuration error logged, when the close margin is
+   * not smaller than the timeout. The rail keeps the timeout once read.
+   */
+  private async escrowTimeoutSeconds(missionId: string): Promise<number | null> {
+    let timeout: number
+    try {
+      if (!this.rail.readTimeoutSeconds) throw new Error('the payment rail does not report the escrow timeout')
+      timeout = await this.rail.readTimeoutSeconds()
+    } catch (error) {
+      this.logger({ level: 'error', msg: 'escrow timeout unknown: skipping the timeout auto-close', missionId, detail: messageOf(error) })
+      return null
+    }
+    if (timeout <= this.fundFlow.closeMarginSeconds) {
+      if (!this.marginErrorLogged) {
+        this.marginErrorLogged = true
+        this.logger({
+          level: 'error',
+          msg: 'ESCROW_CLOSE_MARGIN_SECONDS is not smaller than the escrow timeout: trips are not closed on the timeout',
+          closeMarginSeconds: this.fundFlow.closeMarginSeconds,
+          timeoutSeconds: timeout,
+        })
+      }
+      return null
+    }
+    return timeout
+  }
+
+  /**
    * One pass of the fund flow for a trip: read usage, fund the next tranche,
    * collect what the voucher covers, and close when it is time. Never throws:
    * a failed step is reported and the next pass retries.
@@ -1401,7 +1429,7 @@ export class MissionProductService {
 
         await this.readProviderUsage(mission)
 
-        const reason = autoCloseReason(mission, usedAtomic(mission), this.fundFlow, now, this.timeoutSeconds)
+        const reason = autoCloseReason(mission, usedAtomic(mission), this.fundFlow, now, await this.escrowTimeoutSeconds(missionId))
         if (reason && mission.voucher) {
           const closed = await this.closeWithVoucher(mission, reason)
           result.closeTxHash = closed.txHash

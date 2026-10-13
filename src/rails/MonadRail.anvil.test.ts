@@ -158,6 +158,14 @@ after(() => {
   anvil?.kill();
 });
 
+test("the rail reports the refund timeout of the deployed contract", { skip }, async () => {
+  assert.equal(await makeRail().readTimeoutSeconds(), Number(TIMEOUT_SECONDS));
+
+  // A contract deployed with another timeout reports its own, not a default.
+  const short = await deploy(artifact("AstroAmEscrow.sol", "AstroAmEscrow"), [usdc, payee.address, operator.address, 7n * 24n * 3600n]);
+  assert.equal(await makeRail({ contract: short }).readTimeoutSeconds(), 7 * 24 * 3600);
+});
+
 test("deposit → app-signed vouchers → metering → close pays usage and refunds the rest", { skip }, async () => {
   const rail = makeRail();
 

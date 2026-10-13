@@ -193,6 +193,14 @@ export interface PaymentRail {
   } | null>;
 
   /**
+   * The escrow's refund timeout, in seconds: how long after the last deposit,
+   * top-up or claim the traveler may take the unclaimed deposit back. It is
+   * fixed when the contract is deployed. Rejects when it cannot be read; the
+   * caller must not guess a value.
+   */
+  readTimeoutSeconds?(): Promise<number>;
+
+  /**
    * Settles the channel once. `settleRaw` is what was actually used; the rail
    * pays at most that (and never more than the highest voucher) and refunds
    * the rest. Without it, the highest voucher is settled.
