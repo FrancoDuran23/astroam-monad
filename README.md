@@ -45,7 +45,7 @@ What exists today:
 
 - **Contract on Monad testnet (chain id 10143):** escrow v3, with its 2026-10-07 transactions, under [The deployed contract](#the-deployed-contract).
 - **Testnet funds:** MON for gas at [faucet.monad.xyz](https://faucet.monad.xyz), testnet USDC at [faucet.circle.com](https://faucet.circle.com).
-- **Test Verification Report:** [docs/test-verification.md](docs/test-verification.md) (339 backend, 61 contract and 36 frontend tests passing, as of commit `5293efc`).
+- **Test Verification Report:** [docs/test-verification.md](docs/test-verification.md) (373 backend, 61 contract and 36 frontend tests passing, as of commit `975035a`).
 - **Run it yourself:** [Try it in 5 minutes](#try-it-in-5-minutes) needs no wallet; [Test with your own deploy](#test-with-your-own-deploy) is the wallet path on Monad testnet.
 
 ### Walkthrough for judges
@@ -314,7 +314,7 @@ Escrow v4 is not deployed on testnet, and the code has no path for v3, so using 
 
 ### Environment variables
 
-The server key is **`MONAD_OPERATOR_PRIVATE_KEY`**. If only the old `MONAD_PAYEE_PRIVATE_KEY` is set, start-up fails with a message that names the new variable. Removed with the treasury sweep (which no longer exists): `TREASURY_ADDRESS`, `BRIDGE_LIQUIDATION_ADDRESS` and `TREASURY_SWEEP_MIN_USDC`. Deploy-time only: `MONAD_DEPLOYER_PRIVATE_KEY`, `MONAD_PAYEE_ADDRESS`, `MONAD_OPERATOR_ADDRESS` and the optional `MONAD_TIMEOUT_SECONDS`. Everything else is documented in [`.env.example`](.env.example). The comment there that names the v3 address is outdated: a v3 address does not work with this code.
+The server key is **`MONAD_OPERATOR_PRIVATE_KEY`**. If only the old `MONAD_PAYEE_PRIVATE_KEY` is set, start-up fails with a message that names the new variable. Removed with the treasury sweep (which no longer exists): `TREASURY_ADDRESS`, `BRIDGE_LIQUIDATION_ADDRESS` and `TREASURY_SWEEP_MIN_USDC`. Deploy-time only: `MONAD_DEPLOYER_PRIVATE_KEY`, `MONAD_PAYEE_ADDRESS`, `MONAD_OPERATOR_ADDRESS` and the optional `MONAD_TIMEOUT_SECONDS`. Everything else is documented in [`.env.example`](.env.example).
 
 ### Keys
 
@@ -329,24 +329,23 @@ The traveler signs **twice** on chain (the approval and the deposit) and never a
 | Vouchers | the traveler's browser | Signs a cumulative voucher with the session key, ahead of usage, capped at the budget, and sends it to the API (`POST /api/missions/:id/authorizations`). No wallet popup. |
 | Tranches | the backend | Funds the eSIM at most one tranche (`FUNDING_TRANCHE_CENTS`, $2.50) ahead of what the vouchers cover, and never more than the deposit pays for. |
 | Collection | the backend, with the operator key | When the usage covered by a voucher and not yet collected reaches `CLAIM_MIN_USDC` (2 USDC by default), it sends a `claim` for `min(used, voucher)`. The escrow pays the payee directly. |
-| Close | the backend, with the operator key | Sends `close` when the traveler ends the trip (`POST /api/missions/:id/finish`), the deposit is spent, the trip's end date plus the grace period (`ESCROW_TRIP_END_GRACE_SECONDS`) has passed, or the escrow timeout is near. `ESCROW_IDLE_CLOSE_SECONDS` can add a close after idleness (off by default). |
+| Close | the backend, with the operator key | Sends `close` when the traveler ends the trip (`POST /api/missions/:id/finish`), the usage reaches the deposit, the trip's end date plus the grace period (`ESCROW_TRIP_END_GRACE_SECONDS`) has passed, or the escrow timeout is near (`ESCROW_CLOSE_MARGIN_SECONDS` before it, one day by default, counted from the last deposit, top-up or claim). `ESCROW_IDLE_CLOSE_SECONDS` can add a close after idleness (off by default). |
 
 There is no treasury step: the contract pays the payee, and the server key never holds the money. What AstroAm can lose is one tranche: without a new voucher it does not fund more, and a close cannot go below what was already collected. What the traveler can lose is bounded by the voucher, and by the used amount when the backend is honest.
 
-Two limits of the close step, found by reading the code. The check that closes a trip when the timeout is near assumes a 7-day timeout, not the contract's 30 days, so a trip left open is closed about six days after the escrow became active. And whether "the deposit is spent" is judged on the voucher or on the usage is changed by the close-path fixes of [spec 12](docs/specs/12-close-path-fixes.md), which were being applied when this was written.
+Three properties of the close step. "The deposit is spent" is judged on the usage, the figure a claim and a close settle, not on the voucher: the app signs a voucher up to the budget ahead of usage, and that alone does not close the trip. The escrow's timeout is read from the contract through the rail, never assumed; if it cannot be read, the backend logs an error and skips the timeout-based close for that pass (it also skips it when `ESCROW_CLOSE_MARGIN_SECONDS` is not smaller than the timeout). The eSIM wallet is returned to the reseller only after the escrow close has landed, and finishing a trip twice, or after a crash between the on-chain close and saving the mission, ends in the same completed state ([spec 12](docs/specs/12-close-path-fixes.md)).
 
 Fund-flow details, the tranche rule and the decisions on the offramp, scope and yield: [docs/arquitectura-flujo-de-fondos.md](docs/arquitectura-flujo-de-fondos.md) (Spanish, with an English update for v4). The tracker of what was built, per milestone: [docs/issues-flujo-de-fondos.md](docs/issues-flujo-de-fondos.md).
 
 ### Mission log
 
-> This section follows [spec 06](docs/specs/06-mission-log.md). The log was being added to this branch while this README was written, so check the code before relying on a detail.
-
 Every trip keeps an append-only history of its eSIM, its usage and its money, so a run can be checked after the fact and a charge can be traced to the readings behind it.
 
 - **Where:** `DATA_DIR/mission-log.jsonl`, one JSON line per event, appended and never rewritten. A line cut short by a crash is ignored when the log is read.
-- **How to read it:** `GET /api/missions/:id/logs` returns `{ missionId, entries }`, oldest first, or 404 for an unknown trip, with the same access rule as `GET /api/missions/:id`.
+- **How to read it:** `GET /api/missions/:id/logs` returns `{ missionId, entries }`, oldest first, or 404 for an unknown trip. Like `GET /api/missions/:id`, it needs no authentication.
+- **Entries:** each line has a format version, a timestamp, the mission id, the eSIM's ICCID (or null), an event type and a small data object.
 - **Failures:** a log write that fails is reported through the logger and never fails the operation it describes.
-- **Never recorded:** a private key, the session key, a voucher signature, an API key or the eSIM's activation code. Amounts are strings in atomic units, with transaction hashes where there is one.
+- **Never recorded:** a private key, a voucher signature, an API key or the eSIM's activation code. Money and byte counts are written as digit strings, with transaction hashes where there is one.
 
 | Event | Recorded when |
 |---|---|
@@ -423,7 +422,7 @@ Rates from [citrusmobile.com/rates](https://citrusmobile.com/rates), checked 202
 | eSIM | The sample profile from `FakeProvider`. No line is issued. The Citrus adapter exists behind `CONNECTIVITY_PROVIDER=citrus`; the only real-eSIM run was with the Solana build ([pending note](#real-esim)). |
 | Persistence | No database. Missions, vouchers and eSIM records are JSON files under `DATA_DIR`, and are lost on restart on a host without a disk (Render's free plan has none). |
 | Hosting | None yet. No hosted deployment exists. The Docker image has never been built: no Docker access was available where it was written. The same server was started directly with Node only. |
-| Mission log | Specified in [spec 06](docs/specs/06-mission-log.md) and being added on this branch. See [Mission log](#mission-log). |
+| Mission log | Implemented and tested: an append-only file under `DATA_DIR` and `GET /api/missions/:id/logs` ([spec 06](docs/specs/06-mission-log.md)). Backend only; no screen shows it. See [Mission log](#mission-log). |
 | Budget assistant | Rules in the app (daily limit, a warning below 20%). No model is called. |
 | Smart plan selection | Planned. Not implemented. |
 | Sales channels | Planned. Two Jujuy travel agencies were invited to a referral pilot on 2026-10-10 and have not answered. |
@@ -437,6 +436,7 @@ Rates from [citrusmobile.com/rates](https://citrusmobile.com/rates), checked 202
 - **Funding runs ahead of the vouchers.** The eSIM wallet is funded one tranche ahead of what the vouchers cover, and a top-up funds it in full.
 - **The refund button is per browser.** It appears only in the browser that made the deposit.
 - **The session key lives in the browser** (`localStorage`). Whoever has it can authorize charges up to the deposit; clearing the browser loses it.
+- **A mission is readable by anyone who knows its id.** `GET /api/missions/:id` needs no authentication and returns the whole mission record, including the eSIM's activation details (LPA string and QR code), so anyone who knows a mission id can read them. Mission ids are a timestamp plus six random characters.
 - **Citrus reports usage in USD charged, not bytes.** Bytes are derived from the country rate; accuracy needs confirming on a real account.
 - **No carrier sandbox.** Every Citrus API test costs real money (minimum top-up USD 4).
 - **Citrus also sells directly to travelers, cheaper than us.** We compete on paying in USDC without a card and on the automatic refund, not on price.
@@ -449,7 +449,7 @@ Everything below is still to do. "The team" means the people in [Team & roles](#
 
 1. **Deploy escrow v4 on Monad testnet and record a full run** (approve, deposit, claim, close), then replace the pending notes above with the address and the transactions. Steps: [Test with your own deploy](#test-with-your-own-deploy).
 2. **Host the demo** on Render and Vercel ([docs/deploy.md](docs/deploy.md)) and add the URLs above.
-3. **A run with a real eSIM that settles on Monad, and 10 sessions with travelers on a real trip.** [docs/real-esim.md](docs/real-esim.md) has the steps and the two code limits to resolve first (one eSIM per user reference, the access token in live mode).
+3. **A run with a real eSIM that settles on Monad, and 10 sessions with travelers on a real trip.** [docs/real-esim.md](docs/real-esim.md) has the steps. The app sends no access token, so the run keeps `ASTROAM_LIVE_ENABLED=false`; one limit of the code remains (one eSIM per user reference, see Known limits).
 4. **Record the Monad demo video and pitch** ([script](docs/guion-video-demo.md)) and replace the Solana ones.
 5. **Payee as a multisig**, chosen when v4 is deployed. See [The plan, not done](#the-plan-not-done).
 6. Legal review of the draft terms (the app footer links to `/terms`).
@@ -458,24 +458,24 @@ Everything below is still to do. "The team" means the people in [Team & roles](#
 
 ## Checks and test verification
 
-As of commit `5293efc`, on 2026-10-13, every suite passes, with no failing and no skipped test:
+As of commit `975035a`, on 2026-10-13, every suite passes, with no failing and no skipped test:
 
 ```bash
-export PATH="$HOME/.config/.foundry/bin:$PATH"   # where Foundry is installed
+# Foundry (forge, anvil) must be on PATH. Without it the anvil-backed rail tests are skipped, not failed.
 npm ci --no-audit --no-fund
 npm run contracts:build
 npm run check                      # backend typecheck: 0 errors
-npm test                           # 339 backend tests, 339 passed, 0 failed
-forge test --root contracts        # 61 contract tests, 61 passed, 0 failed
+npm test                           # 373 backend tests, 373 passed, 0 failed, 0 skipped
+forge test --root contracts        # 61 contract tests, 61 passed, 0 failed, 0 skipped
 
 cd frontend
 npm ci --no-audit --no-fund
 npm run typecheck                  # 0 errors
 npm test                           # 36 frontend tests, 36 passed, 0 failed
-npm run build                      # built in 5.2 s
+npm run build                      # builds
 ```
 
-The backend count will rise when the mission log and the close-path fixes land; the figure is refreshed by running these commands again. The details, what the suites cover and what they do not show are in [docs/test-verification.md](docs/test-verification.md). With Foundry installed `npm test` also runs the rail tests against a local anvil chain with v4 deployed.
+The details, what the suites cover and what they do not show are in [docs/test-verification.md](docs/test-verification.md). With Foundry installed `npm test` also runs the rail tests against a local anvil chain with v4 deployed; without it those tests are skipped, and the ABI test is skipped when `contracts/out` is absent.
 
 ## Documents
 
