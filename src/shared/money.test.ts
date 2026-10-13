@@ -84,7 +84,7 @@ test("computeExpectedAmountRaw rejects a non-positive price", () => {
   assert.throws(() => computeExpectedAmountRaw(100n, 0n), RangeError);
 });
 
-// --- parseNonNegativeIntegerRaw (review finding, Lote D: ?cumulativeBytes=
+// --- parseNonNegativeIntegerRaw (review finding, Batch D: ?cumulativeBytes=
 // must never reach a raw BigInt() call) ---
 
 test("parseNonNegativeIntegerRaw accepts 0 and plain digit strings", () => {

@@ -17,7 +17,7 @@ function fakeEsimStore(): EsimStore {
   } as unknown as EsimStore;
 }
 
-test("CitrusProvider.getResellerBalance convierte USD a balanceMicroUsd bigint (C1)", async () => {
+test("CitrusProvider.getResellerBalance converts USD to a bigint balanceMicroUsd (C1)", async () => {
   const mockHttp: HttpClient = {
     async get<T>() {
       return { data: { balance_usd: 125.5, currency: "USD" } as T };
@@ -40,7 +40,7 @@ test("CitrusProvider.getResellerBalance convierte USD a balanceMicroUsd bigint (
   assert.equal(balance.balanceMicroUsd, 125_500_000n);
 });
 
-test("CitrusProvider.getResellerBalance maneja saldo 0", async () => {
+test("CitrusProvider.getResellerBalance handles a zero balance", async () => {
   const mockHttp: HttpClient = {
     async get<T>() {
       return { data: { balance_usd: 0, currency: "USD" } as T };
@@ -63,7 +63,7 @@ test("CitrusProvider.getResellerBalance maneja saldo 0", async () => {
   assert.equal(balance.balanceMicroUsd, 0n);
 });
 
-test("FakeProvider.getResellerBalance devuelve balance por defecto de 100 USD (100_000_000n)", async () => {
+test("FakeProvider.getResellerBalance returns a default balance of 100 USD (100_000_000n)", async () => {
   const fake = new FakeProvider();
   const balance = await fake.getResellerBalance();
 
@@ -71,7 +71,7 @@ test("FakeProvider.getResellerBalance devuelve balance por defecto de 100 USD (1
   assert.equal(balance.balanceMicroUsd, 100_000_000n);
 });
 
-test("FakeProvider.setResellerBalanceUsd actualiza el saldo simulado para tests", async () => {
+test("FakeProvider.setResellerBalanceUsd updates the simulated balance for tests", async () => {
   const fake = new FakeProvider();
   fake.setResellerBalanceUsd(20);
 

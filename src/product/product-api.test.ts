@@ -41,7 +41,7 @@ class MockVoucherPort implements VoucherPort {
   async requestVoucher(m1: Message1): Promise<Message2> {
     this.requestedM1s.push(m1)
     if (this.mode === 'throw') {
-      throw new Error('Agente de vouchers no disponible')
+      throw new Error('Voucher agent unavailable')
     }
     const channel = m1.channel || '0x5FbDB2315678afecb367f032d93F642f64180aa3'
     if (this.mode === 'unsigned') {
@@ -54,7 +54,7 @@ class MockVoucherPort implements VoucherPort {
         retryable: false,
         remaining: '0',
         meterReadingId: m1.meterReadingId,
-        detail: 'Depósito agotado',
+        detail: 'Deposit exhausted',
       }
     }
     return {
@@ -307,7 +307,7 @@ test('POST /missions/:id/payment-intent rejects with 503 RESELLER_INSUFFICIENT_F
     assert.equal(errorBody.error, 'RESELLER_INSUFFICIENT_FUNDS')
     assert.equal(
       errorBody.message,
-      'Servicio temporalmente no disponible: saldo operativo del proveedor insuficiente para iniciar el viaje.',
+      'Service temporarily unavailable: insufficient provider operating balance to start the trip.',
     )
 
     // 3. Restore reseller balance (>= $4.25)
@@ -359,7 +359,7 @@ test('POST /missions/:id/activate rejects with 503 RESELLER_INSUFFICIENT_FUNDS w
     assert.equal(errorBody.error, 'RESELLER_INSUFFICIENT_FUNDS')
     assert.equal(
       errorBody.message,
-      'Servicio temporalmente no disponible: saldo operativo del proveedor insuficiente para iniciar el viaje.',
+      'Service temporarily unavailable: insufficient provider operating balance to start the trip.',
     )
 
     // 3. Restore reseller balance and retry activation

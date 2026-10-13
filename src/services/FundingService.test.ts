@@ -76,7 +76,7 @@ async function buildHarness(over: { row?: Partial<EsimRecordRow>; topUpError?: u
   return { store, provider, service, stamped, iccid };
 }
 
-test("sin fila → no_row; con closing/defund/terminated → no toca el proveedor", async () => {
+test("no row → no_row; with closing/defund/terminated → does not touch the provider", async () => {
   const h = await buildHarness();
   assert.deepEqual(await h.service.ensureFunded({ iccid: "no-row", userRef: "x", channelId: CHANNEL }), { funded: false, reason: "no_row" });
 
@@ -88,7 +88,7 @@ test("sin fila → no_row; con closing/defund/terminated → no toca el proveedo
   assert.equal(h.provider.list()[0]!.fundingRequests.length, 0);
 });
 
-test("ya financiado al techo → already_funded, sin topUp", async () => {
+test("already funded to the ceiling → already_funded, no topUp", async () => {
   const h = await buildHarness({ row: { fundedMicroUsd: BigInt(MAX_CENTS) * MICRO_USD_PER_CENT } });
   const result = await h.service.ensureFunded({ iccid: h.iccid, userRef: "user-1", channelId: CHANNEL });
   assert.deepEqual(result, { funded: false, reason: "already_funded" });
@@ -97,7 +97,7 @@ test("ya financiado al techo → already_funded, sin topUp", async () => {
 
 const TRANCHE_CENTS = 250;
 
-test("financia el primer tramo (TRANCHE_CENTS = 250) al abrir sin vales y lo confirma", async () => {
+test("funds the first tranche (TRANCHE_CENTS = 250) on open without vouchers and confirms it", async () => {
   const h = await buildHarness();
   const result = await h.service.ensureFunded({ iccid: h.iccid, userRef: "user-1", channelId: CHANNEL });
   assert.deepEqual(result, { funded: true, amountCents: TRANCHE_CENTS });
@@ -107,18 +107,18 @@ test("financia el primer tramo (TRANCHE_CENTS = 250) al abrir sin vales y lo con
   assert.equal(h.provider.sim(h.iccid).fundingRequests.length, 1);
   assert.equal(h.stamped.some((l) => l.reason === "wallet_funded" && l.source === "confirmed"), true);
 
-  // Sin vale nuevo, un segundo llamado no fondea nada (already_funded)
+  // Without a new voucher, a second call funds nothing (already_funded)
   const second = await h.service.ensureFunded({ iccid: h.iccid, userRef: "user-1", channelId: CHANNEL });
   assert.deepEqual(second, { funded: false, reason: "already_funded" });
 });
 
-test("fondea el siguiente tramo cuando un vale cubre el anterior", async () => {
+test("funds the next tranche when a voucher covers the previous one", async () => {
   const h = await buildHarness();
-  // Primer tramo
+  // First tranche
   await h.service.ensureFunded({ iccid: h.iccid, userRef: "user-1", channelId: CHANNEL });
   assert.equal(h.store.get(h.iccid)!.fundedMicroUsd, BigInt(TRANCHE_CENTS) * MICRO_USD_PER_CENT);
 
-  // Vale de 3 USDC (30_000_000 raw = 3_000_000 atomic) cubre 200 cents.
+  // A 3 USDC voucher (30_000_000 raw = 3_000_000 atomic) covers 200 cents.
   // target = min(200 + 250, 333) = 333. gap = 333 - 250 = 83 cents.
   const result = await h.service.ensureFunded({
     iccid: h.iccid,
@@ -131,8 +131,8 @@ test("fondea el siguiente tramo cuando un vale cubre el anterior", async () => {
   assert.equal(h.provider.sim(h.iccid).fundingRequests.length, 2);
 });
 
-test("reconciliación R5: un pendingFund que ATERRIZÓ se acredita sin volver a fundir", async () => {
-  // Crash tras POST /fund pero antes de confirmar: la wallet ya creció.
+test("R5 reconciliation: a pendingFund that LANDED is credited without funding again", async () => {
+  // Crash after POST /fund but before confirming: the wallet already grew.
   const h = await buildHarness({
     walletCents: TRANCHE_CENTS,
     row: {
@@ -140,15 +140,15 @@ test("reconciliación R5: un pendingFund que ATERRIZÓ se acredita sin volver a 
     },
   });
   const result = await h.service.ensureFunded({ iccid: h.iccid, userRef: "user-1", channelId: CHANNEL });
-  assert.deepEqual(result, { funded: false, reason: "already_funded" }); // el gap quedó cubierto por la reconciliación
+  assert.deepEqual(result, { funded: false, reason: "already_funded" }); // the gap was covered by the reconciliation
   const row = h.store.get(h.iccid)!;
   assert.equal(row.pendingFund, null);
   assert.equal(row.fundedMicroUsd, BigInt(TRANCHE_CENTS) * MICRO_USD_PER_CENT);
-  assert.equal(h.provider.sim(h.iccid).fundingRequests.length, 1); // el topUp que ya había sucedido
+  assert.equal(h.provider.sim(h.iccid).fundingRequests.length, 1); // the topUp that had already happened
   assert.equal(h.stamped.some((l) => l.reason === "wallet_funded" && l.source === "reconciled"), true);
 });
 
-test("reconciliación R5: un pendingFund que NO aterrizó se descarta y se funde fresco", async () => {
+test("R5 reconciliation: a pendingFund that did NOT land is discarded and funded fresh", async () => {
   const h = await buildHarness({
     row: { pendingFund: { amountCents: TRANCHE_CENTS, walletBeforeCents: 0, requestedAt: "2026-09-24T10:00:00.000Z" } },
   });
@@ -158,12 +158,12 @@ test("reconciliación R5: un pendingFund que NO aterrizó se descarta y se funde
   assert.equal(row.pendingFund, null);
   assert.equal(row.fundedMicroUsd, BigInt(TRANCHE_CENTS) * MICRO_USD_PER_CENT);
   assert.equal(h.stamped.some((l) => l.reason === "fund_intent_dropped"), true);
-  assert.equal(h.provider.sim(h.iccid).fundingRequests.length, 1); // el intento fresco
+  assert.equal(h.provider.sim(h.iccid).fundingRequests.length, 1); // the fresh attempt
 });
 
-test("un rechazo definitivo (400/401/404/409) limpia el intento durable y relanza", async () => {
+test("a definitive rejection (400/401/404/409) clears the durable intent and rethrows", async () => {
   const h = await buildHarness({
-    topUpError: new CitrusApiError(409, "CONFLICT", "la wallet tiene un defund pendiente", { retryable: false }),
+    topUpError: new CitrusApiError(409, "CONFLICT", "the wallet has a pending defund", { retryable: false }),
   });
   await assert.rejects(h.service.ensureFunded({ iccid: h.iccid, userRef: "user-1", channelId: CHANNEL }));
   const row = h.store.get(h.iccid)!;
@@ -171,9 +171,9 @@ test("un rechazo definitivo (400/401/404/409) limpia el intento durable y relanz
   assert.equal(row.fundedMicroUsd, 0n);
 });
 
-test("un rechazo reintentable/timeout NO limpia el pendingFund (queda para reconciliar en el próximo run)", async () => {
+test("a retryable/timeout rejection does NOT clear the pendingFund (kept to reconcile on the next run)", async () => {
   const h = await buildHarness({
-    topUpError: new CitrusApiError(0, "REQUEST_TIMEOUT", "el fund se colgó", { retryable: true }),
+    topUpError: new CitrusApiError(0, "REQUEST_TIMEOUT", "the fund call hung", { retryable: true }),
   });
   await assert.rejects(h.service.ensureFunded({ iccid: h.iccid, userRef: "user-1", channelId: CHANNEL }));
   const row = h.store.get(h.iccid)!;

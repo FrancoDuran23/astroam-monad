@@ -26,7 +26,7 @@ export function createProductRouter(service: MissionProductService): Router {
       if (isWildcardOrigin(process.env.FRONTEND_ORIGIN)) {
         res.status(503).json({
           error: 'service_unavailable',
-          message: "FRONTEND_ORIGIN con '*' no está permitido en modo live",
+          message: "FRONTEND_ORIGIN with '*' is not allowed in live mode",
         })
         return
       }
@@ -34,7 +34,7 @@ export function createProductRouter(service: MissionProductService): Router {
       if (!process.env.ASTROAM_DEMO_ACCESS_TOKEN) {
         res.status(503).json({
           error: 'service_unavailable',
-          message: 'ASTROAM_DEMO_ACCESS_TOKEN debe configurarse en el servidor para operaciones mutables en modo live',
+          message: 'ASTROAM_DEMO_ACCESS_TOKEN must be set on the server for mutating operations in live mode',
         })
         return
       }
@@ -44,7 +44,7 @@ export function createProductRouter(service: MissionProductService): Router {
       if (auth !== expected) {
         res.status(401).json({
           error: 'unauthorized',
-          message: 'Se requiere token de acceso válido para operaciones mutables en modo live',
+          message: 'A valid access token is required for mutating operations in live mode',
         })
         return
       }
@@ -85,7 +85,7 @@ export function createProductRouter(service: MissionProductService): Router {
       ) {
         res.status(503).json({
           error: 'RESELLER_INSUFFICIENT_FUNDS',
-          message: 'Servicio temporalmente no disponible: saldo operativo del proveedor insuficiente para iniciar el viaje.',
+          message: 'Service temporarily unavailable: insufficient provider operating balance to start the trip.',
         })
         return
       }
@@ -118,7 +118,7 @@ export function createProductRouter(service: MissionProductService): Router {
       ) {
         res.status(503).json({
           error: 'RESELLER_INSUFFICIENT_FUNDS',
-          message: 'Servicio temporalmente no disponible: saldo operativo del proveedor insuficiente para iniciar el viaje.',
+          message: 'Service temporarily unavailable: insufficient provider operating balance to start the trip.',
         })
         return
       }

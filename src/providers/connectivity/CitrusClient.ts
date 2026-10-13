@@ -188,7 +188,7 @@ export class CitrusClient {
   private parseEsim(data: Record<string, unknown>): CitrusEsim {
     const iccid = typeof data.iccid === "string" ? data.iccid : "";
     if (iccid === "") {
-      throw new CitrusApiError(0, "MALFORMED_RESPONSE", "la respuesta no trajo iccid", { retryable: false });
+      throw new CitrusApiError(0, "MALFORMED_RESPONSE", "the response did not include an iccid", { retryable: false });
     }
     const status = parseEsimStatus(data.status);
     return {
@@ -205,7 +205,7 @@ export class CitrusClient {
 
   private parseWalletBalance(data: Record<string, unknown> | undefined): CitrusResellerBalance {
     if (!data || typeof data !== "object") {
-      throw new CitrusApiError(0, "MALFORMED_RESPONSE", "la respuesta no trajo balance", { retryable: false });
+      throw new CitrusApiError(0, "MALFORMED_RESPONSE", "the response did not include a balance", { retryable: false });
     }
     let balanceUsd: number | undefined;
     if (typeof data.balance_usd === "number" && Number.isFinite(data.balance_usd)) {
@@ -217,7 +217,7 @@ export class CitrusClient {
       }
     }
     if (balanceUsd === undefined) {
-      throw new CitrusApiError(0, "MALFORMED_RESPONSE", "la respuesta no trajo balance_usd válido", { retryable: false });
+      throw new CitrusApiError(0, "MALFORMED_RESPONSE", "the response did not include a valid balance_usd", { retryable: false });
     }
     const currency =
       typeof data.currency === "string" && data.currency.trim().length > 0

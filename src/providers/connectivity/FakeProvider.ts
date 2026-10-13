@@ -40,7 +40,7 @@ export class FakeProvider implements ConnectivityProvider {
   sim(iccid: string): FakeEsimState {
     const state = this.byIccid.get(iccid);
     if (state === undefined) {
-      throw new Error(`FakeProvider: no hay eSIM para el iccid ${iccid}`);
+      throw new Error(`FakeProvider: no eSIM for iccid ${iccid}`);
     }
     return state;
   }
@@ -85,17 +85,17 @@ export class FakeProvider implements ConnectivityProvider {
 
   async topUp(iccid: string, amountCents: number): Promise<void> {
     if (!Number.isInteger(amountCents) || amountCents < 1) {
-      throw new RangeError(`FakeProvider topUp: amountCents debe ser un entero positivo, recibí ${amountCents}`);
+      throw new RangeError(`FakeProvider topUp: amountCents must be a positive integer, got ${amountCents}`);
     }
     if (amountCents > 10_000) {
-      throw new RangeError("FakeProvider topUp: Citrus rechaza recargas sobre 10 000 centavos (100 USD)");
+      throw new RangeError("FakeProvider topUp: Citrus rejects top-ups above 10,000 cents (100 USD)");
     }
     const state = this.sim(iccid);
     if (state.status === "terminated") {
-      throw new Error(`FakeProvider topUp: la eSIM ${iccid} está terminada`);
+      throw new Error(`FakeProvider topUp: eSIM ${iccid} is terminated`);
     }
     if (state.defundPending) {
-      throw new Error(`FakeProvider topUp: la eSIM ${iccid} tiene un defund pendiente — no se puede recargar`);
+      throw new Error(`FakeProvider topUp: eSIM ${iccid} has a pending defund — cannot top up`);
     }
     state.walletMicroUsd += BigInt(amountCents) * 10_000n;
     state.fundingRequests.push({ amountCents, at: this.now().toISOString() });
@@ -129,7 +129,7 @@ export class FakeProvider implements ConnectivityProvider {
   async refundUnused(iccid: string): Promise<void> {
     const state = this.sim(iccid);
     if (state.defundPending) {
-      return; // idempotente; Citrus responde DEFUND_ALREADY_PENDING
+      return; // idempotent; Citrus answers DEFUND_ALREADY_PENDING
     }
     state.defundPending = true;
     state.defundSolicitedAt = this.now().toISOString();
@@ -144,7 +144,7 @@ export class FakeProvider implements ConnectivityProvider {
   settleDefund(iccid: string): void {
     const state = this.sim(iccid);
     if (!state.defundPending) {
-      throw new Error(`FakeProvider settleDefund: la eSIM ${iccid} no tiene un defund pendiente`);
+      throw new Error(`FakeProvider settleDefund: eSIM ${iccid} has no pending defund`);
     }
     state.defundPending = false;
     state.defundSolicitedAt = state.defundSolicitedAt ?? this.now().toISOString();
@@ -162,7 +162,7 @@ export class FakeProvider implements ConnectivityProvider {
   /** Test seam: sets the fake reseller balance in USD. */
   setResellerBalanceUsd(amount: number): void {
     if (!Number.isFinite(amount) || amount < 0) {
-      throw new RangeError(`FakeProvider: amount debe ser un número no negativo, recibí ${amount}`);
+      throw new RangeError(`FakeProvider: amount must be a non-negative number, got ${amount}`);
     }
     this.resellerBalanceUsd = amount;
   }
@@ -177,7 +177,7 @@ export class FakeProvider implements ConnectivityProvider {
   async terminate(iccid: string): Promise<void> {
     const state = this.sim(iccid);
     if (state.walletMicroUsd > 0n) {
-      throw new Error(`FakeProvider terminate: la eSIM ${iccid} aún tiene saldo — defund primero`);
+      throw new Error(`FakeProvider terminate: eSIM ${iccid} still has a balance — defund first`);
     }
     state.status = "terminated";
     this.byUserRef.delete(state.userRef);

@@ -7,7 +7,7 @@ export class ResellerInsufficientFundsError extends Error {
   readonly requiredUsd: number
 
   constructor(balanceUsd: number, requiredUsd: number, message?: string) {
-    const defaultMsg = `RESELLER_INSUFFICIENT_FUNDS: Saldo operativo de reseller insuficiente ($${balanceUsd.toFixed(2)} USD < $${requiredUsd.toFixed(2)} USD requeridos)`
+    const defaultMsg = `RESELLER_INSUFFICIENT_FUNDS: Insufficient operating reseller balance ($${balanceUsd.toFixed(2)} USD < $${requiredUsd.toFixed(2)} USD required)`
     super(message ?? defaultMsg)
     this.name = 'ResellerInsufficientFundsError'
     this.balanceUsd = balanceUsd

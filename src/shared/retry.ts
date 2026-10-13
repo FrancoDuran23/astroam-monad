@@ -9,7 +9,7 @@
 // Sleeps between attempts are bounded by construction, but that alone does
 // not bound the *total* wall-clock time of a call: each attempt's own work
 // (e.g. a slow/hanging fetch) is unbounded unless the caller adds its own
-// timeout (review finding, Lote C). `deadlineMs` and `attemptTimeoutMs`
+// timeout (review finding, Batch C). `deadlineMs` and `attemptTimeoutMs`
 // close that gap so the total elapsed time — sleeps plus attempt work —
 // stays under METER_REPORT_INTERVAL_MS (10s default), per FT-R3.
 
@@ -86,7 +86,7 @@ function defaultSleep(ms: number): Promise<void> {
 /** Thrown by a port (a payment rail's chain RPC calls) for a
  * genuine transport-level failure — DNS, connection refused, a malformed
  * RPC response, anything that is NOT a definitive "this channel does not
- * exist" simulation result (review finding 5, Lote F). Distinct from a
+ * exist" simulation result (review finding 5, Batch F). Distinct from a
  * plain `Error` so `agent/routes/vouchers.ts` (and any other caller) can
  * map it to the retryable `upstream_unavailable` M2 reason instead of the
  * generic `internal_error`, exactly like `TimeoutError` below already does
@@ -104,7 +104,7 @@ export class UpstreamRpcError extends Error {
 /** Thrown by `withTimeout` (and, through it, `withRetry`'s `attemptTimeoutMs`)
  * when `fn` does not settle within `timeoutMs`. A distinct class — never a
  * plain `Error` — so a caller can tell "this specific call hung" apart from
- * any other rejection and react differently (review finding, Lote D:
+ * any other rejection and react differently (review finding, Batch D:
  * `agent/routes/vouchers.ts` maps a signer/deposit-port timeout to a
  * specific retryable M2 reason instead of a generic `internal_error`). */
 export class TimeoutError extends Error {
@@ -119,7 +119,7 @@ export class TimeoutError extends Error {
 
 /**
  * Races `fn()` against a timer; rejects with `TimeoutError` if the timer
- * wins first. Exported standalone (review finding, Lote D) so a single
+ * wins first. Exported standalone (review finding, Batch D) so a single
  * bounded call — no retries, no backoff — can reuse the same primitive
  * `withRetry` uses internally for `attemptTimeoutMs`, instead of a second,
  * slightly different copy of the same race living in another module.

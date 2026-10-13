@@ -3,12 +3,12 @@
 // process (design 4.3: two server instances would need a real distributed
 // lock, explicitly out of scope — 4.10).
 //
-// Relocated from `agent/mutex.ts` to `shared/` in WU7 (Lote E) so
+// Relocated from `agent/mutex.ts` to `shared/` in WU7 (Batch E) so
 // `server/channel-service.ts` can serialize its own per-channel accept/close
 // operations with the same primitive `agent/routes/vouchers.ts` uses for
 // coalescing, without the server importing from the agent module (design
-// 4.1's folder boundary: "shared/ es el único módulo que importan tanto
-// agent/ como server/"). `agent/mutex.ts` re-exports this file unchanged so
+// 4.1's folder boundary: "shared/ is the only module imported by both
+// agent/ and server/"). `agent/mutex.ts` re-exports this file unchanged so
 // no existing import breaks.
 
 export type ChannelMutex = {
