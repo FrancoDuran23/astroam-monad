@@ -3,10 +3,13 @@
 // without a network. scripts/check-real-run.ts and scripts/deploy-monad-escrow.ts
 // are the thin layers that read the values.
 
-export type CheckLevel = "ok" | "warn" | "fail";
+export type CheckLevel = "ok" | "info" | "warn" | "fail";
 export type CheckResult = { level: CheckLevel; what: string; fix?: string };
 
+import { isWildcardOrigin } from "../../product/api/cors.ts";
+
 const ok = (what: string): CheckResult => ({ level: "ok", what });
+const info = (what: string, fix?: string): CheckResult => ({ level: "info", what, fix });
 const warn = (what: string, fix?: string): CheckResult => ({ level: "warn", what, fix });
 const fail = (what: string, fix: string): CheckResult => ({ level: "fail", what, fix });
 
@@ -201,29 +204,50 @@ export type ConfigFacts = {
   paymentRail: string | undefined;
   liveEnabled: string | undefined;
   demoTraffic: string | undefined;
-  accessTokenSet: boolean;
+  connectivityProvider: string | undefined;
   frontendOrigin: string | undefined;
 };
+
+/** localhost, loopback or a private LAN address (phone testing on the same Wi-Fi). */
+export function isLocalOrigin(origin: string): boolean {
+  let host: string;
+  try {
+    host = new URL(origin).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (host === "localhost" || host === "[::1]" || host === "::1") return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
+}
 
 export function configChecks(f: ConfigFacts): CheckResult[] {
   const out: CheckResult[] = [];
   if (f.paymentRail === "monad") out.push(ok("PAYMENT_RAIL=monad"));
   else out.push(fail(`PAYMENT_RAIL is "${f.paymentRail ?? ""}"`, "set PAYMENT_RAIL=monad"));
 
-  if (f.liveEnabled === "true") out.push(ok("ASTROAM_LIVE_ENABLED=true"));
-  else out.push(fail(`ASTROAM_LIVE_ENABLED is "${f.liveEnabled ?? ""}"`, "set ASTROAM_LIVE_ENABLED=true"));
-
   if (f.demoTraffic === "false") out.push(ok("ENABLE_DEMO_TRAFFIC=false: usage is what the carrier reports"));
   else out.push(fail(`ENABLE_DEMO_TRAFFIC is "${f.demoTraffic ?? ""}", so usage can still be invented`, "set ENABLE_DEMO_TRAFFIC=false"));
 
-  if (f.accessTokenSet) out.push(ok("ASTROAM_DEMO_ACCESS_TOKEN is set"));
-  else out.push(fail("ASTROAM_DEMO_ACCESS_TOKEN is empty", "set a long random token; live mode requires it on every route that changes data"));
+  // Live mode is informational: the frontend sends no access token, so in live
+  // mode every route that creates or changes a mission answers 401.
+  if (f.liveEnabled === "true") {
+    out.push(warn("ASTROAM_LIVE_ENABLED=true: the app does not send the access token, so trips cannot be created from it in live mode", "leave ASTROAM_LIVE_ENABLED=false for a run driven from the app"));
+  } else {
+    out.push(info("ASTROAM_LIVE_ENABLED is off: right for a run driven from the app (live mode needs a token the app does not send)"));
+  }
 
-  const origins = (f.frontendOrigin ?? "").split(",").map((o) => o.trim()).filter(Boolean);
+  const raw = (f.frontendOrigin ?? "").trim();
+  const origins = raw.split(",").map((o) => o.trim()).filter(Boolean);
   if (origins.length === 0) {
     out.push(fail("FRONTEND_ORIGIN is empty", "set it to the app's origin, e.g. http://localhost:5173"));
-  } else if (origins.includes("*")) {
+  } else if (isWildcardOrigin(raw)) {
     out.push(fail("FRONTEND_ORIGIN is a wildcard (*)", "list the real origin(s) instead of *"));
+  } else if (f.connectivityProvider === "citrus" && origins.some((o) => !isLocalOrigin(o))) {
+    const bad = origins.filter((o) => !isLocalOrigin(o)).join(",");
+    out.push(fail(`FRONTEND_ORIGIN includes ${bad}: with real Citrus a public app lets anyone spend the reseller balance, since testnet funds are free`, "run the real eSIM on a laptop: use only localhost, 127.0.0.1 or a private LAN address"));
   } else {
     out.push(ok(`FRONTEND_ORIGIN=${origins.join(",")}`));
   }

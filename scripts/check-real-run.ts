@@ -25,7 +25,7 @@ const env = process.env;
 function print(title: string, results: CheckResult[]): void {
   console.log(`\n${title}`);
   for (const r of results) {
-    const tag = r.level === "ok" ? "ok  " : r.level === "warn" ? "warn" : "FAIL";
+    const tag = r.level === "ok" ? "ok  " : r.level === "warn" ? "warn" : r.level === "info" ? "note" : "FAIL";
     console.log(`  ${tag}  ${r.what}`);
     if (r.fix && r.level !== "ok") console.log(`        fix: ${r.fix}`);
   }
@@ -118,8 +118,8 @@ const provider = providerChecks(await readProvider());
 const config = configChecks({
   paymentRail: env.PAYMENT_RAIL,
   liveEnabled: env.ASTROAM_LIVE_ENABLED,
+  connectivityProvider: env.CONNECTIVITY_PROVIDER,
   demoTraffic: env.ENABLE_DEMO_TRAFFIC,
-  accessTokenSet: Boolean(env.ASTROAM_DEMO_ACCESS_TOKEN?.trim()),
   frontendOrigin: env.FRONTEND_ORIGIN,
 });
 

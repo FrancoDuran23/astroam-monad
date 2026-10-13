@@ -34,9 +34,9 @@ So a working line needs all of these on the same API process:
 | `MONAD_OPERATOR_PRIVATE_KEY` | The escrow's `operator()` (or its payee). It sends `claim` and `close`, and never receives USDC. |
 | `CONNECTIVITY_PROVIDER=citrus` and `CITRUS_API_KEY` | Selects the real provider. |
 | `ENABLE_DEMO_TRAFFIC=false` | Removes the button that invents traffic. |
-| `CITRUS_WEBHOOK_SECRET`, `ASTROAM_LIVE_ENABLED=true`, `ASTROAM_DEMO_ACCESS_TOKEN`, `FRONTEND_ORIGIN` | `npm run real:check` requires them. |
+| `CITRUS_WEBHOOK_SECRET` and `FRONTEND_ORIGIN` | `npm run real:check` requires them. With real Citrus the origin must be local (`localhost`, `127.0.0.1` or a private LAN address): testnet funds are free, so on a public app anyone could spend the reseller's balance. Leave `ASTROAM_LIVE_ENABLED=false`; the check does not require live mode. |
 
-Known conflict, found by reading the code and not yet resolved: with `ASTROAM_LIVE_ENABLED=true` the API asks for `Authorization: Bearer <ASTROAM_DEMO_ACCESS_TOKEN>` on every route that changes data, and the frontend in this repository sends no such header. Against an API in live mode the app's calls that create or change a mission are answered with 401. A run through the app today therefore needs either the frontend to send the token or the run to drive the API directly. Decide this before the Monad run.
+Known limit: with `ASTROAM_LIVE_ENABLED=true` the API asks for `Authorization: Bearer <ASTROAM_DEMO_ACCESS_TOKEN>` on every route that changes data, and the frontend in this repository sends no such header. Against an API in live mode the app's calls that create or change a mission are answered with 401. A run through the app today therefore needs either the frontend to send the token or the run to drive the API directly. For a run through the app, keep live mode off (the preflight does not require it).
 
 ## Known limit: one eSIM per user reference
 

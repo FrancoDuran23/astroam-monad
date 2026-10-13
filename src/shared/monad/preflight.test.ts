@@ -7,6 +7,7 @@ import {
   escrowConfigMismatches,
   failureCount,
   formatMon,
+  isLocalOrigin,
   providerChecks,
   type ChainFacts,
   type ConfigFacts,
@@ -111,23 +112,54 @@ test("provider: a balance exactly equal to the requirement passes", () => {
 
 const goodConfig: ConfigFacts = {
   paymentRail: "monad",
-  liveEnabled: "true",
+  liveEnabled: "false",
   demoTraffic: "false",
-  accessTokenSet: true,
-  frontendOrigin: "https://app.example.com",
+  connectivityProvider: "citrus",
+  frontendOrigin: "http://localhost:5173",
 };
 
-test("config: the live setup passes, the .env.example defaults do not", () => {
-  assert.equal(failureCount(configChecks(goodConfig)), 0);
-  const defaults = configChecks({ paymentRail: "fake", liveEnabled: "false", demoTraffic: "true", accessTokenSet: false, frontendOrigin: "http://localhost:5173" });
-  assert.equal(failureCount(defaults), 4);
+test("config: the local real-run setup passes, live mode is not required", () => {
+  const results = configChecks(goodConfig);
+  assert.equal(failureCount(results), 0);
+  assert.ok(results.some((r) => r.level === "info" && /ASTROAM_LIVE_ENABLED/.test(r.what)));
+  assert.equal(failureCount(configChecks({ ...goodConfig, liveEnabled: undefined })), 0);
+});
+
+test("config: live mode is a warning that names the missing token, never a failure", () => {
+  const results = configChecks({ ...goodConfig, liveEnabled: "true" });
+  assert.equal(failureCount(results), 0);
+  const w = results.find((r) => r.level === "warn");
+  assert.match(w?.what ?? "", /does not send the access token/);
+  assert.match(w?.fix ?? "", /false/);
+});
+
+test("config: the .env.example defaults fail on rail and demo traffic only", () => {
+  const defaults = configChecks({ paymentRail: "fake", liveEnabled: "false", demoTraffic: "true", connectivityProvider: "fake", frontendOrigin: "http://localhost:5173" });
+  assert.equal(failureCount(defaults), 2);
 });
 
 test("config: a wildcard or empty origin fails; demo traffic must be the literal false", () => {
   assert.equal(failureCount(configChecks({ ...goodConfig, frontendOrigin: "*" })), 1);
-  assert.equal(failureCount(configChecks({ ...goodConfig, frontendOrigin: "http://a, *" })), 1);
+  assert.equal(failureCount(configChecks({ ...goodConfig, frontendOrigin: "http://localhost:1, *" })), 1);
   assert.equal(failureCount(configChecks({ ...goodConfig, frontendOrigin: "" })), 1);
   assert.equal(failureCount(configChecks({ ...goodConfig, demoTraffic: undefined })), 1);
+});
+
+test("config: with real Citrus every origin must be local; with the fake provider any origin is fine", () => {
+  const origin = (frontendOrigin: string, connectivityProvider = "citrus") => configChecks({ ...goodConfig, frontendOrigin, connectivityProvider });
+  assert.equal(failureCount(origin("http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.50:5173,http://10.0.0.2:5173,http://172.20.1.1:5173")), 0);
+  const bad = origin("http://localhost:5173,https://app.vercel.app");
+  assert.equal(failureCount(bad), 1);
+  assert.match(bad.find((r) => r.level === "fail")?.what ?? "", /anyone spend the reseller balance/);
+  assert.equal(failureCount(origin("https://x.ngrok-free.app")), 1);
+  assert.equal(failureCount(origin("http://172.32.0.1:5173")), 1);
+  assert.equal(failureCount(origin("https://app.vercel.app", "fake")), 0);
+});
+
+test("isLocalOrigin", () => {
+  assert.ok(isLocalOrigin("http://localhost:5173"));
+  assert.ok(!isLocalOrigin("not a url"));
+  assert.ok(!isLocalOrigin("https://localhost.evil.com"));
 });
 
 test("formatMon prints four decimals", () => {
