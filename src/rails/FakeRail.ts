@@ -158,13 +158,17 @@ export class FakeEscrow {
     escrow.lastActivityAt = this.seconds();
   }
 
-  /** Pays the payee the part of `voucherAmount` not claimed yet. Returns that part. */
-  async claim(escrowId: string, voucherAmount: bigint, signature: string): Promise<bigint> {
+  /**
+   * Pays the payee up to `claimTotal` in all: above what was claimed, never
+   * above `voucherAmount`. Returns the part paid now.
+   */
+  async claim(escrowId: string, voucherAmount: bigint, signature: string, claimTotal: bigint): Promise<bigint> {
     const escrow = this.open(escrowId);
     await this.checkVoucher(escrow, escrowId, voucherAmount, signature);
-    if (voucherAmount <= escrow.claimed) throw new EscrowRevert("NothingToClaim");
-    const amount = voucherAmount - escrow.claimed;
-    escrow.claimed = voucherAmount;
+    if (claimTotal > voucherAmount) throw new EscrowRevert("ClaimExceedsVoucher");
+    if (claimTotal <= escrow.claimed) throw new EscrowRevert("NothingToClaim");
+    const amount = claimTotal - escrow.claimed;
+    escrow.claimed = claimTotal;
     escrow.lastActivityAt = this.seconds();
     this.payeeBalance += amount;
     return amount;
@@ -427,11 +431,12 @@ export class FakeRail implements PaymentRail {
     channelId: string;
     voucherAmountAtomic: bigint;
     signature: string;
+    claimTotalAtomic: bigint;
   }): Promise<{ txHash: string; claimedAtomic: bigint }> {
-    await this.escrow.claim(params.channelId, params.voucherAmountAtomic, params.signature);
+    await this.escrow.claim(params.channelId, params.voucherAmountAtomic, params.signature, params.claimTotalAtomic);
     return {
       txHash: `0xmock_claim_${++this.seq}`,
-      claimedAtomic: params.voucherAmountAtomic,
+      claimedAtomic: params.claimTotalAtomic,
     };
   }
 

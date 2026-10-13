@@ -70,6 +70,7 @@ contract AstroAmEscrowTest {
     address internal nextOperator = address(0x0932);
 
     event OperatorChanged(address indexed previous, address indexed current);
+    event Claimed(bytes32 indexed escrowId, uint256 amount, uint256 totalClaimed);
 
     function setUp() public {
         traveler = vm.addr(TRAVELER_KEY);
@@ -95,7 +96,7 @@ contract AstroAmEscrowTest {
     function _claim(uint256 key, uint256 amount) internal {
         bytes memory sig = _sign(key, amount);
         vm.prank(operator);
-        escrow.claim(ESCROW_ID, amount, sig);
+        escrow.claim(ESCROW_ID, amount, sig, amount);
     }
 
     function _claimed() internal view returns (uint256 claimed) {
@@ -275,12 +276,12 @@ contract AstroAmEscrowTest {
         bytes memory same = _sign(SESSION_KEY, 2_000_000);
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.NothingToClaim.selector);
-        escrow.claim(ESCROW_ID, 2_000_000, same);
+        escrow.claim(ESCROW_ID, 2_000_000, same, 2_000_000);
 
         bytes memory lower = _sign(SESSION_KEY, 1_000_000);
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.NothingToClaim.selector);
-        escrow.claim(ESCROW_ID, 1_000_000, lower);
+        escrow.claim(ESCROW_ID, 1_000_000, lower, 1_000_000);
     }
 
     function test_claimOfZeroReverts() public {
@@ -288,7 +289,119 @@ contract AstroAmEscrowTest {
         bytes memory sig = _sign(SESSION_KEY, 0);
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.NothingToClaim.selector);
-        escrow.claim(ESCROW_ID, 0, sig);
+        escrow.claim(ESCROW_ID, 0, sig, 0);
+    }
+
+    // --- claim below the voucher: the voucher is a ceiling, not a bill ------
+
+    function test_claimBelowTheVoucherPaysTheDifferenceAndLeavesTheRestClaimable() public {
+        _open();
+        // The app signed 4 USDC ahead; 1 USDC was used so far.
+        bytes memory sig = _sign(SESSION_KEY, 4_000_000);
+        vm.expectEmit(true, false, false, true, address(escrow));
+        emit Claimed(ESCROW_ID, 1_000_000, 1_000_000);
+        vm.prank(operator);
+        escrow.claim(ESCROW_ID, 4_000_000, sig, 1_000_000);
+        require(usdc.balanceOf(payee) == 1_000_000, "payee paid the usage, not the voucher");
+        require(_claimed() == 1_000_000 && !_settled(), "claimed is the usage");
+        require(usdc.balanceOf(address(escrow)) == DEPOSIT - 1_000_000, "rest stays locked");
+
+        // The same voucher still covers later usage, up to its amount.
+        vm.expectEmit(true, false, false, true, address(escrow));
+        emit Claimed(ESCROW_ID, 1_500_000, 2_500_000);
+        vm.prank(operator);
+        escrow.claim(ESCROW_ID, 4_000_000, sig, 2_500_000);
+        require(usdc.balanceOf(payee) == 2_500_000 && _claimed() == 2_500_000, "second part");
+        vm.prank(operator);
+        escrow.claim(ESCROW_ID, 4_000_000, sig, 4_000_000);
+        require(usdc.balanceOf(payee) == 4_000_000 && _claimed() == 4_000_000, "up to the voucher");
+        require(usdc.balanceOf(address(escrow)) == DEPOSIT - 4_000_000, "escrow holds the rest");
+    }
+
+    function test_claimTotalAboveTheVoucherReverts() public {
+        _open();
+        bytes memory sig = _sign(SESSION_KEY, 2_000_000);
+        vm.prank(operator);
+        vm.expectRevert(AstroAmEscrow.ClaimExceedsVoucher.selector);
+        escrow.claim(ESCROW_ID, 2_000_000, sig, 2_000_001);
+        vm.prank(operator);
+        vm.expectRevert(AstroAmEscrow.ClaimExceedsVoucher.selector);
+        escrow.claim(ESCROW_ID, 2_000_000, sig, DEPOSIT);
+        require(usdc.balanceOf(payee) == 0 && _claimed() == 0, "nothing moved");
+    }
+
+    function test_claimTotalNotAboveClaimedReverts() public {
+        _open();
+        bytes memory sig = _sign(SESSION_KEY, 4_000_000);
+        vm.prank(operator);
+        escrow.claim(ESCROW_ID, 4_000_000, sig, 1_000_000);
+
+        // Although the voucher has 3 USDC left, a total at or below what was claimed pays nothing.
+        vm.prank(operator);
+        vm.expectRevert(AstroAmEscrow.NothingToClaim.selector);
+        escrow.claim(ESCROW_ID, 4_000_000, sig, 1_000_000);
+        vm.prank(operator);
+        vm.expectRevert(AstroAmEscrow.NothingToClaim.selector);
+        escrow.claim(ESCROW_ID, 4_000_000, sig, 999_999);
+        vm.prank(operator);
+        vm.expectRevert(AstroAmEscrow.NothingToClaim.selector);
+        escrow.claim(ESCROW_ID, 4_000_000, sig, 0);
+        require(usdc.balanceOf(payee) == 1_000_000 && _claimed() == 1_000_000, "nothing more moved");
+    }
+
+    function test_partialClaimStillChecksTheVoucher() public {
+        _open();
+        bytes memory stranger = _sign(STRANGER_KEY, 4_000_000);
+        vm.prank(operator);
+        vm.expectRevert(AstroAmEscrow.BadVoucher.selector);
+        escrow.claim(ESCROW_ID, 4_000_000, stranger, 1);
+
+        bytes memory tooMuch = _sign(SESSION_KEY, DEPOSIT + 1);
+        vm.prank(operator);
+        vm.expectRevert(AstroAmEscrow.AmountExceedsDeposit.selector);
+        escrow.claim(ESCROW_ID, DEPOSIT + 1, tooMuch, 1);
+    }
+
+    function test_twoPartialClaimsOnOneVoucherThenCloseAtAHigherUsage() public {
+        _open();
+        bytes memory sig = _sign(SESSION_KEY, 4_000_000);
+        vm.prank(operator);
+        escrow.claim(ESCROW_ID, 4_000_000, sig, 1_000_000);
+        vm.prank(operator);
+        escrow.claim(ESCROW_ID, 4_000_000, sig, 2_000_000);
+        require(usdc.balanceOf(payee) == 2_000_000, "two claims, 2 USDC in all");
+
+        // The trip ends with 3 USDC used: the same voucher covers the close.
+        vm.prank(operator);
+        escrow.close(ESCROW_ID, 4_000_000, sig, 3_000_000);
+        require(usdc.balanceOf(payee) == 3_000_000, "payee got the usage in total");
+        require(usdc.balanceOf(traveler) == 100_000_000 - 3_000_000, "everything not used refunded");
+        require(usdc.balanceOf(address(escrow)) == 0 && _settled(), "settled and empty");
+    }
+
+    function test_closeRightAfterAPartialClaimAtTheSameAmountNeedsNoNewVoucher() public {
+        _open();
+        bytes memory sig = _sign(SESSION_KEY, 4_000_000);
+        vm.prank(operator);
+        escrow.claim(ESCROW_ID, 4_000_000, sig, 1_500_000);
+
+        // No more usage: close at what was claimed, with no signature at all.
+        vm.prank(operator);
+        escrow.close(ESCROW_ID, 1_500_000, "", 1_500_000);
+        require(usdc.balanceOf(payee) == 1_500_000, "nothing more paid");
+        require(usdc.balanceOf(traveler) == 100_000_000 - 1_500_000, "the unused part of the voucher is refunded too");
+        require(usdc.balanceOf(address(escrow)) == 0 && _settled(), "settled and empty");
+    }
+
+    function test_refundAfterAPartialClaimReturnsEverythingNotClaimed() public {
+        _open();
+        bytes memory sig = _sign(SESSION_KEY, 4_000_000);
+        vm.prank(operator);
+        escrow.claim(ESCROW_ID, 4_000_000, sig, 1_000_000);
+        vm.warp(block.timestamp + TIMEOUT);
+        escrow.refund(ESCROW_ID);
+        require(usdc.balanceOf(traveler) == 100_000_000 - 1_000_000, "the unclaimed 4 USDC back, signed or not");
+        require(usdc.balanceOf(payee) == 1_000_000, "claim kept");
     }
 
     function test_travelerCannotClaim() public {
@@ -296,7 +409,7 @@ contract AstroAmEscrowTest {
         bytes memory sig = _sign(SESSION_KEY, 1_000_000);
         vm.prank(traveler);
         vm.expectRevert(AstroAmEscrow.NotOperator.selector);
-        escrow.claim(ESCROW_ID, 1_000_000, sig);
+        escrow.claim(ESCROW_ID, 1_000_000, sig, 1_000_000);
     }
 
     function test_claimRejectsVoucherFromAnotherKey() public {
@@ -304,7 +417,7 @@ contract AstroAmEscrowTest {
         bytes memory sig = _sign(STRANGER_KEY, 1_000_000);
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.BadVoucher.selector);
-        escrow.claim(ESCROW_ID, 1_000_000, sig);
+        escrow.claim(ESCROW_ID, 1_000_000, sig, 1_000_000);
     }
 
     function test_claimRejectsVoucherForADifferentAmount() public {
@@ -312,7 +425,7 @@ contract AstroAmEscrowTest {
         bytes memory sig = _sign(SESSION_KEY, 1_000_000);
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.BadVoucher.selector);
-        escrow.claim(ESCROW_ID, 2_000_000, sig);
+        escrow.claim(ESCROW_ID, 2_000_000, sig, 2_000_000);
     }
 
     function test_claimRejectsMalleableSignature() public {
@@ -321,7 +434,7 @@ contract AstroAmEscrowTest {
         bytes memory twin = abi.encodePacked(r, bytes32(ORDER - uint256(s)), v == 27 ? uint8(28) : uint8(27));
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.BadVoucher.selector);
-        escrow.claim(ESCROW_ID, 1_000_000, twin);
+        escrow.claim(ESCROW_ID, 1_000_000, twin, 1_000_000);
     }
 
     function test_claimCannotExceedTheDeposit() public {
@@ -329,7 +442,7 @@ contract AstroAmEscrowTest {
         bytes memory sig = _sign(SESSION_KEY, DEPOSIT + 1);
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.AmountExceedsDeposit.selector);
-        escrow.claim(ESCROW_ID, DEPOSIT + 1, sig);
+        escrow.claim(ESCROW_ID, DEPOSIT + 1, sig, DEPOSIT + 1);
     }
 
     function test_travelerSignedVoucherCanBeClaimed() public {
@@ -342,7 +455,7 @@ contract AstroAmEscrowTest {
         bytes memory sig = _sign(SESSION_KEY, 1_000_000);
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.EscrowMissing.selector);
-        escrow.claim(ESCROW_ID, 1_000_000, sig);
+        escrow.claim(ESCROW_ID, 1_000_000, sig, 1_000_000);
     }
 
     function test_claimAfterCloseReverts() public {
@@ -352,7 +465,7 @@ contract AstroAmEscrowTest {
         escrow.close(ESCROW_ID, 1_000_000, sig, 500_000);
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.AlreadySettled.selector);
-        escrow.claim(ESCROW_ID, 1_000_000, sig);
+        escrow.claim(ESCROW_ID, 1_000_000, sig, 1_000_000);
     }
 
     // --- close and refund after claims -----------------------------------
@@ -478,7 +591,7 @@ contract AstroAmEscrowTest {
 
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.AlreadySettled.selector);
-        escrow.claim(ESCROW_ID, 1_000_000, sig);
+        escrow.claim(ESCROW_ID, 1_000_000, sig, 1_000_000);
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.AlreadySettled.selector);
         escrow.close(ESCROW_ID, 1_000_000, sig, 1_000_000);
@@ -496,7 +609,7 @@ contract AstroAmEscrowTest {
         _open();
         bytes memory sig = _sign(SESSION_KEY, 1_000_000);
         vm.prank(operator);
-        escrow.claim(ESCROW_ID, 1_000_000, sig);
+        escrow.claim(ESCROW_ID, 1_000_000, sig, 1_000_000);
         require(usdc.balanceOf(payee) == 1_000_000, "payee paid");
         require(usdc.balanceOf(operator) == 0, "operator holds nothing");
         require(usdc.balanceOf(address(escrow)) == DEPOSIT - 1_000_000, "rest stays locked");
@@ -518,7 +631,7 @@ contract AstroAmEscrowTest {
         _open();
         bytes memory first = _sign(SESSION_KEY, 1_000_000);
         vm.prank(payee);
-        escrow.claim(ESCROW_ID, 1_000_000, first);
+        escrow.claim(ESCROW_ID, 1_000_000, first, 1_000_000);
         require(usdc.balanceOf(payee) == 1_000_000 && _claimed() == 1_000_000, "claimed by the payee");
 
         bytes memory last = _sign(SESSION_KEY, 2_000_000);
@@ -534,11 +647,11 @@ contract AstroAmEscrowTest {
         bytes memory sig = _sign(SESSION_KEY, 1_000_000);
         vm.prank(stranger);
         vm.expectRevert(AstroAmEscrow.NotOperator.selector);
-        escrow.claim(ESCROW_ID, 1_000_000, sig);
+        escrow.claim(ESCROW_ID, 1_000_000, sig, 1_000_000);
         // Holding the session key does not make its address a caller either.
         vm.prank(session);
         vm.expectRevert(AstroAmEscrow.NotOperator.selector);
-        escrow.claim(ESCROW_ID, 1_000_000, sig);
+        escrow.claim(ESCROW_ID, 1_000_000, sig, 1_000_000);
         require(usdc.balanceOf(address(escrow)) == DEPOSIT && _claimed() == 0, "nothing moved");
     }
 
@@ -608,7 +721,7 @@ contract AstroAmEscrowTest {
         bytes memory sig = _sign(SESSION_KEY, 2_000_000);
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.NotOperator.selector);
-        escrow.claim(ESCROW_ID, 2_000_000, sig);
+        escrow.claim(ESCROW_ID, 2_000_000, sig, 2_000_000);
         vm.prank(operator);
         vm.expectRevert(AstroAmEscrow.NotOperator.selector);
         escrow.close(ESCROW_ID, 2_000_000, sig, 2_000_000);
@@ -627,7 +740,7 @@ contract AstroAmEscrowTest {
         // Vouchers signed before the change stay valid: they do not name the operator.
         bytes memory sig = _sign(SESSION_KEY, 2_000_000);
         vm.prank(nextOperator);
-        escrow.claim(ESCROW_ID, 2_000_000, sig);
+        escrow.claim(ESCROW_ID, 2_000_000, sig, 2_000_000);
         require(usdc.balanceOf(payee) == 2_000_000, "payee paid");
 
         bytes memory last = _sign(SESSION_KEY, 3_000_000);
@@ -644,7 +757,7 @@ contract AstroAmEscrowTest {
         escrow.setOperator(nextOperator);
         bytes memory sig = _sign(SESSION_KEY, 1_000_000);
         vm.prank(payee);
-        escrow.claim(ESCROW_ID, 1_000_000, sig);
+        escrow.claim(ESCROW_ID, 1_000_000, sig, 1_000_000);
         require(usdc.balanceOf(payee) == 1_000_000, "paid");
     }
 

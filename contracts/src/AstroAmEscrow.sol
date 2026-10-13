@@ -7,13 +7,19 @@ pragma solidity 0.8.24;
 /// The traveler deposits Circle USDC (6 decimals) once and registers a session
 /// key. While the traveler browses, the app signs EIP-712 vouchers with that
 /// key for the running total it authorizes — off-chain, no gas per megabyte.
-/// While the channel is open AstroAm may `claim` the part of a voucher it has
-/// not been paid yet, so it never carries more than the latest voucher unpaid.
-/// It closes the channel once: it is paid what was actually used (never less
-/// than what it already claimed, never more than the highest voucher) and the
-/// rest goes back to the traveler in the same transaction. If AstroAm never
-/// closes, `refund` returns everything not yet claimed `timeoutSeconds` after
-/// the last deposit, top-up or claim.
+/// A voucher is the most the traveler authorizes, not a bill: the app signs
+/// ahead of usage so data keeps flowing. While the channel is open AstroAm may
+/// `claim` the usage it has not been paid yet, up to the voucher, so it never
+/// carries much usage unpaid. It closes the channel once: it is paid what was
+/// actually used (never less than what it already claimed, never more than
+/// the highest voucher) and the rest goes back to the traveler in the same
+/// transaction. If AstroAm never closes, `refund` returns everything not yet
+/// claimed `timeoutSeconds` after the last deposit, top-up or claim.
+///
+/// What stays trusted: the contract cannot know how much data was used. It
+/// only enforces the voucher as a ceiling, so whoever operates the channel
+/// may claim or settle any amount up to it. What the traveler controls is how
+/// far ahead of usage the app signs: that margin is all that is ever exposed.
 ///
 /// AstroAm is two accounts. The `payee` is fixed at deployment and is where
 /// every `claim` and `close` payment goes; it can be a cold wallet or a
@@ -21,10 +27,10 @@ pragma solidity 0.8.24;
 /// `close` transactions and never receives funds. The payee may send them too,
 /// and replaces the operator with `setOperator`.
 ///
-/// Each claim restarts the timeout, but only with a voucher above what was
-/// already claimed: the payee can never be paid more than the traveler signed,
-/// though the operator can delay the refund of the rest by cashing vouchers
-/// one by one.
+/// Each claim restarts the timeout, but only when it collects something above
+/// what was already claimed: the payee can never be paid more than the
+/// traveler signed, though the operator can delay the refund of the rest by
+/// claiming a voucher in small parts.
 ///
 /// A compromised operator cannot move funds anywhere except to the payee and
 /// the traveler. Against AstroAm it can close a channel early with what was
@@ -45,6 +51,7 @@ contract AstroAmEscrow {
     error AmountExceedsDeposit();
     error SettleExceedsVoucher();
     error SettleBelowClaimed();
+    error ClaimExceedsVoucher();
     error NothingToClaim();
     error BadVoucher();
     error TimeoutNotReached();
@@ -151,24 +158,33 @@ contract AstroAmEscrow {
         emit ToppedUp(escrowId, amount, escrow.deposit);
     }
 
-    /// @notice Collect the part of `voucherAmount` not claimed yet and keep the
-    /// channel open. Only the operator or the payee, only with a voucher above
-    /// what was already claimed. The payee is paid, whoever calls. Restarts the
-    /// refund timeout.
-    function claim(bytes32 escrowId, uint256 voucherAmount, bytes calldata signature) external {
+    /// @notice Collect usage and keep the channel open. `voucherAmount` is the
+    /// running total the traveler's session key (or the traveler) signed: the
+    /// most that may be collected. `claimTotal` is the running total the payee
+    /// will have been paid after this call (what was used so far): above what
+    /// was already claimed and never above the voucher. The payee is paid the
+    /// difference, and the rest of the voucher stays claimable with the same
+    /// signature. Only the operator or the payee; the payee is paid, whoever
+    /// calls. Restarts the refund timeout.
+    ///
+    /// The contract cannot check `claimTotal` against real usage: the voucher
+    /// is the only bound it enforces.
+    function claim(bytes32 escrowId, uint256 voucherAmount, bytes calldata signature, uint256 claimTotal) external {
         _checkOperator();
         Escrow storage escrow = escrows[escrowId];
         if (escrow.traveler == address(0)) revert EscrowMissing();
         if (escrow.settled) revert AlreadySettled();
         _checkVoucher(escrow, escrowId, voucherAmount, signature);
-        if (voucherAmount <= escrow.claimed) revert NothingToClaim();
+        if (claimTotal > voucherAmount) revert ClaimExceedsVoucher();
+        uint256 claimed = escrow.claimed;
+        if (claimTotal <= claimed) revert NothingToClaim();
 
-        uint256 amount = voucherAmount - escrow.claimed;
-        escrow.claimed = voucherAmount;
+        uint256 amount = claimTotal - claimed;
+        escrow.claimed = claimTotal;
         escrow.lastActivityAt = uint64(block.timestamp);
         _push(payee, amount);
 
-        emit Claimed(escrowId, amount, voucherAmount);
+        emit Claimed(escrowId, amount, claimTotal);
     }
 
     /// @notice Settle the channel once. AstroAm is paid `settleAmount` in total

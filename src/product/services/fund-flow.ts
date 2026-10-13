@@ -5,8 +5,10 @@
 //
 // - the eSIM wallet is never funded more than one tranche ahead of what the
 //   traveler's vouchers already cover, and never past what the deposit pays for;
-// - a voucher is collected with `claim` once it is worth a tranche, so a
-//   traveler who closes with an old voucher cannot take that part back.
+// - usage is collected with `claim` once it is worth a tranche, so a
+//   traveler who closes with an old voucher cannot take that part back. A
+//   voucher is a ceiling the app signs ahead of usage, not a bill: a claim
+//   collects what was used, up to the voucher, never the voucher itself.
 //
 // Pure functions: no provider, no chain, no clock of their own.
 
@@ -21,7 +23,7 @@ export type FundFlowConfig = {
   markupBps: number;
   /** USD per USDC, basis points (`USDC_USD_RATE_BPS`). */
   usdcUsdRateBps: number;
-  /** Uncollected voucher amount that triggers a claim, USDC atomic units (`CLAIM_MIN_USDC`). */
+  /** Used and signed for but not collected yet: the amount that triggers a claim, USDC atomic units (`CLAIM_MIN_USDC`). */
   claimMinAtomic: bigint;
   /** How long before the escrow's refund timeout the backend closes, seconds (`ESCROW_CLOSE_MARGIN_SECONDS`). */
   closeMarginSeconds: number;
@@ -92,9 +94,18 @@ export function nextFundCents(
   return gap >= config.minFundCents ? gap : 0;
 }
 
-/** True when the voucher holds enough uncollected USDC to be worth a claim. */
-export function claimIsDue(voucherAtomic: bigint, claimedAtomic: bigint, config: FundFlowConfig): boolean {
-  return voucherAtomic > claimedAtomic && voucherAtomic - claimedAtomic >= config.claimMinAtomic;
+/**
+ * The running total a claim may collect: what the trip has used, and never
+ * more than the traveler's voucher covers. Claiming this keeps "claimed never
+ * exceeds used", so a close at the used amount is never below what was claimed.
+ */
+export function claimableAtomic(usedAtomic: bigint, voucherAtomic: bigint): bigint {
+  return usedAtomic < voucherAtomic ? usedAtomic : voucherAtomic;
+}
+
+/** True when `claimable` (see `claimableAtomic`) holds enough uncollected USDC to be worth a claim. */
+export function claimIsDue(claimable: bigint, claimedAtomic: bigint, config: FundFlowConfig): boolean {
+  return claimable > claimedAtomic && claimable - claimedAtomic >= config.claimMinAtomic;
 }
 
 export type AutoCloseReason = NonNullable<ProductMission["autoCloseReason"]>;

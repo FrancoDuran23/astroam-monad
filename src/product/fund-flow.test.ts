@@ -4,6 +4,7 @@ import {
   DEFAULT_FUND_FLOW,
   costCentsPaidBy,
   nextFundCents,
+  claimableAtomic,
   claimIsDue,
   autoCloseReason,
   fundFlowConfigFromEnv,
@@ -40,7 +41,19 @@ test("nextFundCents: one tranche past the voucher, never past what the deposit p
   assert.equal(fund(10_000_000n, 666), 0);
 });
 
-test("claimIsDue: triggers when uncollected voucher amount exceeds threshold", () => {
+test("claimableAtomic: what was used, never more than the voucher covers", () => {
+  // Signed 4 USDC ahead, 1 USDC used: the usage is what can be collected.
+  assert.equal(claimableAtomic(1_000_000n, 4_000_000n), 1_000_000n);
+  // Usage ran past the voucher: only what the traveler signed.
+  assert.equal(claimableAtomic(5_000_000n, 4_000_000n), 4_000_000n);
+  assert.equal(claimableAtomic(4_000_000n, 4_000_000n), 4_000_000n);
+  assert.equal(claimableAtomic(0n, 4_000_000n), 0n);
+  // A large voucher alone makes no claim due: the usage has to be there.
+  assert.equal(claimIsDue(claimableAtomic(1_000_000n, 9_000_000n), 0n, DEFAULT_FUND_FLOW), false);
+  assert.equal(claimIsDue(claimableAtomic(2_000_000n, 9_000_000n), 0n, DEFAULT_FUND_FLOW), true);
+});
+
+test("claimIsDue: triggers when the uncollected claimable amount reaches the threshold", () => {
   const config = DEFAULT_FUND_FLOW; // claimMinAtomic = 2_000_000n (2 USDC)
   assert.equal(claimIsDue(1_000_000n, 0n, config), false);
   assert.equal(claimIsDue(2_000_000n, 0n, config), true);

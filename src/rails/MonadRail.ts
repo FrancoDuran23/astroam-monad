@@ -8,8 +8,9 @@
 //   vouchers — the traveler's app signs EIP-712 vouchers with the session key
 //              for the running total it authorizes; the server keeps the
 //              highest valid one and credits data only up to it.
-//   claim    — the operator calls claim() with a voucher; the contract pays
-//              the payee the part not collected yet.
+//   claim    — the operator calls claim() with a voucher and the usage so
+//              far; the contract pays the payee the usage not collected
+//              yet, never more than the voucher.
 //   close    — the operator calls close(): the payee is paid what was used,
 //              capped by the highest voucher; the rest is refunded on-chain.
 //
@@ -353,10 +354,12 @@ export class MonadRail implements PaymentRail {
     };
   }
 
+  /** Sends `claim(escrowId, voucherAmount, signature, claimTotal)`: the payee is paid up to `claimTotalAtomic` in all. */
   async claim(params: {
     channelId: string;
     voucherAmountAtomic: bigint;
     signature: string;
+    claimTotalAtomic: bigint;
   }): Promise<{ txHash: string; claimedAtomic: bigint }> {
     const formattedChannelId = params.channelId.startsWith("0x")
       ? params.channelId
@@ -374,7 +377,7 @@ export class MonadRail implements PaymentRail {
       address: this.opts.escrow,
       abi: astroAmEscrowAbi,
       functionName: "claim",
-      args: [escrowId, params.voucherAmountAtomic, signature],
+      args: [escrowId, params.voucherAmountAtomic, signature, params.claimTotalAtomic],
     });
     const hash = await this.wallet.writeContract(request);
     const receipt = await this.client.waitForTransactionReceipt({ hash });
@@ -384,7 +387,7 @@ export class MonadRail implements PaymentRail {
 
     return {
       txHash: (receipt as { hash?: string }).hash ?? receipt.transactionHash ?? hash,
-      claimedAtomic: params.voucherAmountAtomic,
+      claimedAtomic: params.claimTotalAtomic,
     };
   }
 

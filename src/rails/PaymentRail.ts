@@ -169,12 +169,17 @@ export interface PaymentRail {
   getAuthorizedRaw?(channelId: string): Promise<bigint>;
 
   /**
-   * Partially claims funds from an open escrow using a cumulative voucher.
+   * Collects usage from an open escrow and keeps it open. The voucher
+   * (`voucherAmountAtomic`, `signature`) is the most the traveler authorized;
+   * `claimTotalAtomic` is the running total the payee will have been paid
+   * after the call: what was used so far, above what was already claimed and
+   * never above the voucher. The rest of the voucher stays claimable.
    */
   claim?(params: {
     channelId: string;
     voucherAmountAtomic: bigint;
     signature: string;
+    claimTotalAtomic: bigint;
   }): Promise<{ txHash: string; claimedAtomic: bigint }>;
 
   /**

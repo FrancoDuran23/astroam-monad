@@ -138,7 +138,7 @@ test("a voucher above the deposit is rejected", async () => {
     accepted: false,
     reason: "exceeds_deposit",
   });
-  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 5_000_001n, signature }), reverts("AmountExceedsDeposit"));
+  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 5_000_001n, signature, claimTotalAtomic: 5_000_001n }), reverts("AmountExceedsDeposit"));
   await assert.rejects(rail.escrow.close(channelId, 5_000_001n, signature, 1n), reverts("AmountExceedsDeposit"));
   assert.equal(rail.getClaimedAtomic(channelId), 0n);
 
@@ -163,13 +163,13 @@ test("a voucher is verified against the channel's session key", async () => {
       accepted: false,
       reason: "bad_signature",
     });
-    await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 2_000_000n, signature }), reverts("BadVoucher"));
+    await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 2_000_000n, signature, claimTotalAtomic: 2_000_000n }), reverts("BadVoucher"));
   }
   // A good signature does not cover a different amount.
-  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 3_000_000n, signature: good }), reverts("BadVoucher"));
+  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 3_000_000n, signature: good, claimTotalAtomic: 3_000_000n }), reverts("BadVoucher"));
   // Not a signature at all.
   const garbage = `0x${"ab".repeat(65)}`;
-  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 2_000_000n, signature: garbage }), reverts("BadVoucher"));
+  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 2_000_000n, signature: garbage, claimTotalAtomic: 2_000_000n }), reverts("BadVoucher"));
   assert.deepEqual(await rail.submitTravelerVoucher({ channelId, cumulativeAmount: "2000000", signature: "0xmock_sig" }), {
     accepted: false,
     reason: "invalid_signature",
@@ -190,22 +190,57 @@ test("a claim pays the payee the part not collected yet, and a claim not above w
   const sig10 = await rail.signVoucher(channelId, 1_000_000n);
   const sig30 = await rail.signVoucher(channelId, 3_000_000n);
 
-  const first = await rail.claim({ channelId, voucherAmountAtomic: 1_500_000n, signature: sig15 });
+  const first = await rail.claim({ channelId, voucherAmountAtomic: 1_500_000n, signature: sig15, claimTotalAtomic: 1_500_000n });
   assert.equal(first.claimedAtomic, 1_500_000n);
   assert.equal(rail.escrow.payeeBalance, 1_500_000n);
 
   // The same voucher again, and a lower one: nothing to claim.
-  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 1_500_000n, signature: sig15 }), reverts("NothingToClaim"));
-  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 1_000_000n, signature: sig10 }), reverts("NothingToClaim"));
+  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 1_500_000n, signature: sig15, claimTotalAtomic: 1_500_000n }), reverts("NothingToClaim"));
+  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 1_000_000n, signature: sig10, claimTotalAtomic: 1_000_000n }), reverts("NothingToClaim"));
   assert.equal(rail.getClaimedAtomic(channelId), 1_500_000n);
   assert.equal(rail.escrow.payeeBalance, 1_500_000n);
 
-  const second = await rail.claim({ channelId, voucherAmountAtomic: 3_000_000n, signature: sig30 });
+  const second = await rail.claim({ channelId, voucherAmountAtomic: 3_000_000n, signature: sig30, claimTotalAtomic: 3_000_000n });
   assert.notEqual(second.txHash, first.txHash);
   assert.equal(rail.getClaimedAtomic(channelId), 3_000_000n);
   assert.equal(rail.escrow.payeeBalance, 3_000_000n);
 
-  await assert.rejects(rail.claim({ channelId: escrowIdForMission("nobody"), voucherAmountAtomic: 1n, signature: sig10 }), reverts("EscrowMissing"));
+  await assert.rejects(rail.claim({ channelId: escrowIdForMission("nobody"), voucherAmountAtomic: 1n, signature: sig10, claimTotalAtomic: 1n }), reverts("EscrowMissing"));
+});
+
+test("a claim below the voucher pays only what it names, and the rest of the voucher stays claimable", async () => {
+  const rail = new FakeRail();
+  const { channelId } = await openChannel(rail, 5);
+  // The app signed 4 USDC ahead; 1 USDC was used.
+  const signature = await rail.signVoucher(channelId, 4_000_000n);
+  const claim = (claimTotalAtomic: bigint) => rail.claim({ channelId, voucherAmountAtomic: 4_000_000n, signature, claimTotalAtomic });
+
+  assert.equal((await claim(1_000_000n)).claimedAtomic, 1_000_000n);
+  assert.equal(rail.getClaimedAtomic(channelId), 1_000_000n);
+  assert.equal(rail.escrow.payeeBalance, 1_000_000n);
+
+  // The total after the claim cannot pass the voucher, and must move forward.
+  await assert.rejects(claim(4_000_001n), reverts("ClaimExceedsVoucher"));
+  await assert.rejects(claim(5_000_000n), reverts("ClaimExceedsVoucher"));
+  await assert.rejects(claim(1_000_000n), reverts("NothingToClaim"));
+  await assert.rejects(claim(999_999n), reverts("NothingToClaim"));
+  await assert.rejects(claim(0n), reverts("NothingToClaim"));
+  assert.equal(rail.escrow.payeeBalance, 1_000_000n);
+
+  // The same voucher covers the next usage.
+  await claim(2_500_000n);
+  assert.equal(rail.escrow.payeeBalance, 2_500_000n);
+
+  // The voucher is still checked on a partial claim.
+  const stranger = await signAs(rail, generatePrivateKey(), channelId, 4_000_000n);
+  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 4_000_000n, signature: stranger, claimTotalAtomic: 3_000_000n }), reverts("BadVoucher"));
+
+  // Close at 3 USDC of usage: the payee gets 0.5 more, the traveler everything not used.
+  await rail.submitTravelerVoucher({ channelId, cumulativeAmount: "4000000", signature });
+  const outcome = await rail.closeChannel(channelId, usdcToRaw(3));
+  assert.equal(outcome.kind === "closed" && outcome.settledRaw, usdcToRaw(3));
+  assert.equal(outcome.kind === "closed" && outcome.refundedRaw, usdcToRaw(2));
+  assert.equal(rail.escrow.payeeBalance, 3_000_000n);
 });
 
 test("a settlement below what was already claimed is rejected", async () => {
@@ -213,7 +248,7 @@ test("a settlement below what was already claimed is rejected", async () => {
   const { channelId } = await openChannel(rail, 5);
   const signature = await rail.signVoucher(channelId, 3_000_000n);
   await rail.submitTravelerVoucher({ channelId, cumulativeAmount: "3000000", signature });
-  await rail.claim({ channelId, voucherAmountAtomic: 3_000_000n, signature });
+  await rail.claim({ channelId, voucherAmountAtomic: 3_000_000n, signature, claimTotalAtomic: 3_000_000n });
 
   await assert.rejects(rail.escrow.close(channelId, 3_000_000n, signature, 2_999_999n), reverts("SettleBelowClaimed"));
   for (const settleRaw of [usdcToRaw(2), 0n]) {
@@ -255,7 +290,7 @@ test("every operation on a settled channel is rejected", async () => {
   assert.equal((await rail.closeChannel(channelId, usdcToRaw(1))).kind, "closed");
 
   const higher = await rail.signVoucher(channelId, 3_000_000n);
-  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 3_000_000n, signature: higher }), reverts("AlreadySettled"));
+  await assert.rejects(rail.claim({ channelId, voucherAmountAtomic: 3_000_000n, signature: higher, claimTotalAtomic: 3_000_000n }), reverts("AlreadySettled"));
   await assert.rejects(rail.escrow.close(channelId, 3_000_000n, higher, 3_000_000n), reverts("AlreadySettled"));
   const closeAgain = await rail.closeChannel(channelId, usdcToRaw(1));
   assert.equal(closeAgain.kind, "failed");
@@ -296,7 +331,7 @@ test("the meter's vouchers are signed with the session key, cover the reading an
   assert.equal(first.voucher.commitmentPubkey, rail.escrow.read(channelId)!.signer);
   // The contract accepts it: it is a real voucher for this channel.
   const atomic = BigInt(first.voucher.cumulativeAmount) / 10n;
-  await rail.claim({ channelId, voucherAmountAtomic: atomic, signature: first.voucher.signature });
+  await rail.claim({ channelId, voucherAmountAtomic: atomic, signature: first.voucher.signature, claimTotalAtomic: atomic });
   assert.equal(rail.getClaimedAtomic(channelId), atomic);
 
   const same = await port.requestVoucher(m1(channelId, 300_000_000));

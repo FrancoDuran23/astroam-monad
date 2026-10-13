@@ -74,6 +74,11 @@ export const astroAmEscrowAbi = [
         "name": "signature",
         "type": "bytes",
         "internalType": "bytes"
+      },
+      {
+        "name": "claimTotal",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -481,6 +486,11 @@ export const astroAmEscrowAbi = [
   {
     "type": "error",
     "name": "BadVoucher",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ClaimExceedsVoucher",
     "inputs": []
   },
   {

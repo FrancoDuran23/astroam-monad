@@ -261,7 +261,7 @@ test("claim and close pay the payee exactly what was claimed and settled, and th
   // 1. The app signs a voucher for 2.5 USDC and the operator claims it.
   const sig1 = await signVoucher(sessionKey, escrowId, 2_500_000n);
   await rail.submitTravelerVoucher({ channelId: escrowId, cumulativeAmount: "2500000", signature: sig1 });
-  const claimRes = await rail.claim({ channelId: escrowId, voucherAmountAtomic: 2_500_000n, signature: sig1 });
+  const claimRes = await rail.claim({ channelId: escrowId, voucherAmountAtomic: 2_500_000n, signature: sig1, claimTotalAtomic: 2_500_000n });
   assert.ok(claimRes.txHash);
   assert.equal(claimRes.claimedAtomic, 2_500_000n);
   assert.equal((await balance(payee.address)) - start.payee, 2_500_000n);
@@ -272,7 +272,7 @@ test("claim and close pay the payee exactly what was claimed and settled, and th
   assert.equal(state?.settled, false);
 
   // The same voucher has nothing left to claim, and the payee is not paid again.
-  await assert.rejects(rail.claim({ channelId: escrowId, voucherAmountAtomic: 2_500_000n, signature: sig1 }), /NothingToClaim/);
+  await assert.rejects(rail.claim({ channelId: escrowId, voucherAmountAtomic: 2_500_000n, signature: sig1, claimTotalAtomic: 2_500_000n }), /NothingToClaim/);
   assert.equal((await balance(payee.address)) - start.payee, 2_500_000n);
 
   // 2. The app signs the next voucher for 4.0 USDC and the close settles it.
@@ -299,6 +299,41 @@ test("claim and close pay the payee exactly what was claimed and settled, and th
   assert.equal((await balance(traveler.address)) - start.traveler, 1_000_000n);
   assert.equal((await balance(operator.address)) - start.operator, 0n);
   assert.equal(await balance(operator.address), 0n);
+});
+
+test("a claim collects the usage, not the voucher: 4 USDC signed, 1 USDC used, then a close at 1.5 USDC", { skip }, async () => {
+  const rail = makeRail();
+  const escrowId = escrowIdForMission("mis_ahead");
+  const { tx, sessionKey } = await walletDeposit(escrowId, 5_000_000n);
+  assert.equal((await rail.confirmDeposit({ missionId: "mis_ahead", txHash: tx, purpose: "mission" })).valid, true);
+
+  // The app signs 4 USDC ahead of usage.
+  const signature = await signVoucher(sessionKey, escrowId, 4_000_000n);
+  await rail.submitTravelerVoucher({ channelId: escrowId, cumulativeAmount: "4000000", signature });
+  const start = { payee: await balance(payee.address), traveler: await balance(traveler.address), escrow: await balance(escrow) };
+  const claim = (claimTotalAtomic: bigint) => rail.claim({ channelId: escrowId, voucherAmountAtomic: 4_000_000n, signature, claimTotalAtomic });
+
+  // 1 USDC was used: the claim collects 1, and the payee's balance grows by exactly 1.
+  const claimed = await claim(1_000_000n);
+  assert.equal(claimed.claimedAtomic, 1_000_000n);
+  assert.equal((await balance(payee.address)) - start.payee, 1_000_000n);
+  assert.equal((await rail.readEscrowState(escrowId))?.claimedAtomic, 1_000_000n);
+  assert.equal(start.escrow - (await balance(escrow)), 1_000_000n);
+
+  // The contract holds the claim to the voucher and makes it move forward.
+  await assert.rejects(claim(4_000_001n), /ClaimExceedsVoucher/);
+  await assert.rejects(claim(1_000_000n), /NothingToClaim/);
+  assert.equal((await balance(payee.address)) - start.payee, 1_000_000n);
+
+  // The trip ends at 1.5 USDC of usage: the close pays 0.5 more and refunds the rest.
+  const outcome = await rail.closeChannel(escrowId, 15_000_000n);
+  assert.equal(outcome.kind, "closed");
+  if (outcome.kind !== "closed") return;
+  assert.equal(outcome.settledRaw, 15_000_000n);
+  assert.equal(outcome.refundedRaw, 35_000_000n);
+  assert.equal((await balance(payee.address)) - start.payee, 1_500_000n);
+  assert.equal((await balance(traveler.address)) - start.traveler, 3_500_000n);
+  assert.equal(start.escrow - (await balance(escrow)), 5_000_000n);
 });
 
 test("a deposit is confirmed by a rail built after the intent was created (a restart in between)", { skip }, async () => {
@@ -465,7 +500,7 @@ test("a rail whose key is neither the operator nor the payee reports not ready a
   const signature = await signVoucher(sessionKey, escrowId, 1_000_000n);
   await strangerRail.submitTravelerVoucher({ channelId: escrowId, cumulativeAmount: "1000000", signature });
   const payeeBefore = await balance(payee.address);
-  await assert.rejects(strangerRail.claim({ channelId: escrowId, voucherAmountAtomic: 1_000_000n, signature }), /NotOperator/);
+  await assert.rejects(strangerRail.claim({ channelId: escrowId, voucherAmountAtomic: 1_000_000n, signature, claimTotalAtomic: 1_000_000n }), /NotOperator/);
   const close = await strangerRail.closeChannel(escrowId, 10_000_000n);
   assert.equal(close.kind, "failed");
   assert.match(close.kind === "failed" ? close.detail : "", /NotOperator/);
@@ -490,4 +525,16 @@ test("a rail whose key is neither the operator nor the payee reports not ready a
   const isReady = await ready(makeRail());
   assert.equal(isReady.status, 200);
   assert.equal(isReady.body.status, "ready");
+
+  // That server invites no deposit: no intent, and the app is told payments are off.
+  const serviceFor = (rail: MonadRail) =>
+    new MissionProductService({ repo: new FileMissionRepository(tempDir()), connectivity: new FakeProvider(), rail, logger: () => {} });
+  const blocked = serviceFor(strangerRail);
+  const { id } = await blocked.createMission({ destination: BRASIL, ...MISSION_DATES, budgetUsdc: 5, dailyLimitUsdc: 5 });
+  await assert.rejects(blocked.createPaymentIntent(id), /503: payments are not available.*operator_not_authorized/);
+  assert.equal((await blocked.getCapabilities()).paymentsLive, false);
+  const open = serviceFor(makeRail());
+  const opened = await open.createMission({ destination: BRASIL, ...MISSION_DATES, budgetUsdc: 5, dailyLimitUsdc: 5 });
+  assert.ok((await open.createPaymentIntent(opened.id)).evm);
+  assert.equal((await open.getCapabilities()).paymentsLive, true);
 });

@@ -79,6 +79,17 @@ What changed from v3, and why:
 - **Bound on a compromised operator:** it can close a channel early with what
   was already claimed, refunding the traveler. It cannot move funds anywhere
   except to the payee and the traveler.
+- **`claim` takes a `claimTotal`:** `claim(escrowId, voucherAmount, signature,
+  claimTotal)`. The app signs vouchers ahead of usage, so a voucher is a
+  ceiling, not a bill. In v3 a claim paid the payee the whole voucher: the
+  traveler was charged for data not used, and a trip that ended with usage
+  below what was claimed could not be closed (`SettleBelowClaimed`). Now the
+  payee is paid up to `claimTotal`, the usage so far: above what was already
+  claimed (`NothingToClaim`) and never above the voucher
+  (`ClaimExceedsVoucher`). The rest of the voucher stays claimable with the
+  same signature, and `close` at the used amount is never below the claimed
+  total. The contract cannot know the usage: the voucher is still the only
+  bound it enforces on whoever operates the channel.
 - Vouchers, `deposit`, `topUp` and `refund` do not change. The EIP-712 domain
   is the same, but its `verifyingContract` is the new address, so a v3 voucher
   is not valid on v4. Open v3 escrows are closed or refunded as in the v1

@@ -6,7 +6,9 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { createServerApp } from "./app.ts";
 import { bootProductService } from "../product/runtime/product-boot.ts";
-import type { MissionProductService } from "../product/services/MissionProductService.ts";
+import { MissionProductService } from "../product/services/MissionProductService.ts";
+import { FileMissionRepository } from "../product/persistence/MissionRepository.ts";
+import { FakeProvider } from "../providers/connectivity/FakeProvider.ts";
 import { FakeRail } from "../rails/FakeRail.ts";
 import type { OperatorCheck } from "../rails/PaymentRail.ts";
 
@@ -51,12 +53,22 @@ test("GET /ready is 503 while the rail's key may not collect or close, and 200 o
     reason: "operator_not_authorized",
     detail: `${account} is neither the operator nor the payee`,
   };
+  let asked = 0;
   class KeyedRail extends FakeRail {
     async checkOperator(): Promise<OperatorCheck> {
+      asked += 1;
       return check;
     }
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astroam-app-"));
+  // The answer is cached for a short time: the clock moves it past each expiry.
+  let clock = 0;
+  const service = new MissionProductService({
+    repo: new FileMissionRepository(dir),
+    connectivity: new FakeProvider(),
+    rail: new KeyedRail(),
+    now: () => clock,
+  });
   await withApp(async (baseUrl) => {
     const notReady = await fetch(`${baseUrl}/ready`);
     assert.equal(notReady.status, 503);
@@ -66,17 +78,24 @@ test("GET /ready is 503 while the rail's key may not collect or close, and 200 o
     assert.match(String(body.detail), /neither the operator nor the payee/);
     // The process is still alive: only readiness is withheld.
     assert.equal((await fetch(`${baseUrl}/health`)).status, 200);
+    // Asked again at once, the chain is not: the answer is reused.
+    assert.equal((await fetch(`${baseUrl}/ready`)).status, 503);
+    assert.equal(asked, 1);
 
+    clock += 60_000;
     check = { authorized: false, account, reason: "upstream_unavailable", detail: "could not read operator() and payee()" };
     const unreachable = await fetch(`${baseUrl}/ready`);
     assert.equal(unreachable.status, 503);
     assert.equal(((await unreachable.json()) as Record<string, unknown>).reason, "upstream_unavailable");
 
+    // An unreachable chain is only held for a few seconds.
+    clock += 5_000;
     check = { authorized: true, account, operator: account, payee: "0x2222222222222222222222222222222222222222" };
     const ready = await fetch(`${baseUrl}/ready`);
     assert.equal(ready.status, 200);
     assert.equal(((await ready.json()) as Record<string, unknown>).status, "ready");
-  }, bootProductService({ DATA_DIR: dir }, new KeyedRail()));
+    assert.equal(asked, 3);
+  }, service);
 });
 
 test("the mission API is mounted under /api", async () => {

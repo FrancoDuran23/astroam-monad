@@ -206,7 +206,7 @@ test("a claim that landed but was not recorded is taken from the rail, not sent 
   await service.submitVoucher(trip.id, voucher);
 
   // The claim reaches the chain, and the process dies before saving it.
-  await rail.claim({ channelId: trip.escrowId, voucherAmountAtomic: BigInt(voucher.cumulativeAtomic), signature: voucher.signature });
+  await rail.claim({ channelId: trip.escrowId, voucherAmountAtomic: BigInt(voucher.cumulativeAtomic), signature: voucher.signature, claimTotalAtomic: BigInt(voucher.cumulativeAtomic) });
   const claim = rail.claim.bind(rail);
   let claims = 0;
   rail.claim = (...args) => {
