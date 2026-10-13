@@ -1,5 +1,6 @@
 import type { ConnectivityProvider } from '../../providers/connectivity/ConnectivityProvider.ts'
 import type { MissionRepository } from '../persistence/MissionRepository.ts'
+import { MemoryMissionLog, type MissionLog, type MissionLogEntry, type MissionLogType } from '../persistence/MissionLog.ts'
 import type { Capabilities, ClaimRecord, DestinationInfo, ProductMission, PublicEsimInfo, TopUpRecord } from '../types/mission.ts'
 import { IntegratedMeterService } from '../../meter/meter-service.ts'
 import { computeCostRaw, type ChannelBalancePort } from '../../services/PolicyEnforcer.ts'
@@ -28,6 +29,17 @@ const MICRO_USD_PER_CENT = 10_000n
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** The usage figures every usage entry of the log carries. */
+function usageData(mission: ProductMission, extra: MissionLogEntry['data']): MissionLogEntry['data'] {
+  return {
+    ...extra,
+    meteredBytes: mission.meteredBytes,
+    consumedMb: mission.consumedMb,
+    consumedUsdc: mission.consumedUsdc,
+    balanceUsdc: mission.balanceUsdc,
+  }
 }
 
 function applyMeteredBytes(mission: ProductMission, totalBytes: bigint): void {
@@ -119,6 +131,8 @@ export type AdvanceResult = {
 
 export type MissionProductServiceOptions = {
   repo: MissionRepository
+  /** What happened to each trip, in order. Kept in memory when not given. */
+  missionLog?: MissionLog
   connectivity: ConnectivityProvider
   /** How missions are paid: a real chain, or FakeRail for demos. */
   rail: PaymentRail
@@ -132,6 +146,7 @@ export type MissionProductServiceOptions = {
 
 export class MissionProductService {
   private repo: MissionRepository
+  private missionLog: MissionLog
   private connectivity: ConnectivityProvider
   private rail: PaymentRail
   private hasCitrusReal: boolean
@@ -149,6 +164,7 @@ export class MissionProductService {
 
   constructor(options: MissionProductServiceOptions) {
     this.repo = options.repo
+    this.missionLog = options.missionLog ?? new MemoryMissionLog()
     this.connectivity = options.connectivity
     this.rail = options.rail
     this.hasCitrusReal = options.hasCitrusReal ?? false
@@ -156,6 +172,26 @@ export class MissionProductService {
     this.timeoutSeconds = options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS
     this.logger = options.logger ?? ((line) => console.log(JSON.stringify(line)))
     this.now = options.now ?? (() => Date.now())
+  }
+
+  /**
+   * Adds an entry to the trip's log. Call it after the change it describes was
+   * saved. A log that cannot be written never fails the operation: it is
+   * reported. `data` holds amounts and transaction hashes only, never a
+   * signature, a key, or the eSIM's activation code.
+   */
+  private record(mission: ProductMission, type: MissionLogType, data: MissionLogEntry['data']): void {
+    try {
+      this.missionLog.append({ v: 1, at: new Date().toISOString(), missionId: mission.id, iccid: mission.iccid ?? null, type, data })
+    } catch (error) {
+      this.logger({ level: 'error', msg: 'mission log not written', missionId: mission.id, type, detail: messageOf(error) })
+    }
+  }
+
+  /** The trip's log, oldest first. Fails for an unknown trip. */
+  async getMissionLog(missionId: string): Promise<MissionLogEntry[]> {
+    await this.load(missionId)
+    return this.missionLog.list(missionId)
   }
 
   private isLiveMode(): boolean {
@@ -455,6 +491,14 @@ export class MissionProductService {
       // The first usage reading sets the baseline instead.
     }
     await this.repo.save(mission)
+    this.record(mission, 'esim.provisioned', {
+      isMock: !this.hasCitrusReal,
+      providerStatus: esimRecord.status,
+      budgetUsdc: mission.budgetUsdc,
+    })
+    if (mission.chargedBaselineMicroUsd !== undefined) {
+      this.record(mission, 'usage.baseline', { chargedBaselineMicroUsd: mission.chargedBaselineMicroUsd })
+    }
 
     // First tranche. A failure here does not undo the activation: the fund-flow job retries.
     try {
@@ -530,6 +574,7 @@ export class MissionProductService {
     mission.status = 'paused'
     if (mission.esim) mission.esim.status = 'suspended'
     await this.repo.save(mission)
+    this.record(mission, 'esim.paused', { reason: 'traveler' })
 
     return { status: 'paused', esimStatus: 'paused' }
   }
@@ -551,6 +596,7 @@ export class MissionProductService {
     mission.status = 'active'
     if (mission.esim) mission.esim.status = 'active'
     await this.repo.save(mission)
+    this.record(mission, 'esim.resumed', { reason: 'traveler' })
 
     return { status: 'active', esimStatus: 'active' }
   }
@@ -683,15 +729,19 @@ export class MissionProductService {
     applyChannelDeposit(mission, result.depositRaw)
     // A top-up restarts the escrow's refund timeout.
     if (result.escrowActiveAt) mission.escrowActiveAt = result.escrowActiveAt
-    if (mission.status === 'paused' && mission.balanceUsdc > 0) {
+    const resumed = mission.status === 'paused' && mission.balanceUsdc > 0
+    if (resumed) {
       mission.status = 'active'
       mission.esimStatus = 'active'
     }
     await this.repo.save(mission)
+    if (resumed) this.record(mission, 'esim.resumed', { reason: 'topup' })
 
     if (mission.iccid) {
       try {
-        await this.connectivity.topUp(mission.iccid, Math.max(1, Math.round(addedUsdc * 100)))
+        const cents = Math.max(1, Math.round(addedUsdc * 100))
+        await this.connectivity.topUp(mission.iccid, cents)
+        this.record(mission, 'esim.funded', { amountCents: cents, source: 'topup', fundedCents: mission.fundedCents ?? 0 })
       } catch {
         // The eSIM wallet catches up on the next funding pass.
       }
@@ -869,6 +919,15 @@ export class MissionProductService {
     }
     if (reason) mission.autoCloseReason = reason
     await this.repo.save(mission)
+    this.record(mission, 'mission.closed', {
+      txHash: mission.closeTxHash ?? null,
+      closeKind: kind,
+      reason: reason ?? 'traveler',
+      meteredBytes: mission.meteredBytes,
+      settledUsdc: mission.settledUsdc ?? null,
+      refundedUsdc: mission.refundedUsdc ?? null,
+      closedAboveUsageAtomic: mission.closedAboveUsageAtomic ?? null,
+    })
     this.logger({ level: 'info', msg: 'escrow close', missionId: mission.id, txHash: mission.closeTxHash, reason: reason ?? 'traveler' })
     return kind
   }
@@ -917,6 +976,15 @@ export class MissionProductService {
       mission.refundedUsdc = mission.budgetUsdc
     }
     await this.repo.save(mission)
+    this.record(mission, 'mission.closed', {
+      txHash: mission.closeTxHash ?? null,
+      closeKind: 'cancelled',
+      reason: 'traveler',
+      meteredBytes: mission.meteredBytes,
+      settledUsdc: 0,
+      refundedUsdc: mission.refundedUsdc ?? null,
+      closedAboveUsageAtomic: null,
+    })
     return result()
   }
 
@@ -980,12 +1048,15 @@ export class MissionProductService {
     const currentBytes = BigInt(mission.meteredBytes || '0') + BigInt(bytes)
     applyMeteredBytes(mission, currentBytes)
 
-    if (result.actionApplied.kind === 'suspend' || mission.balanceUsdc <= 0) {
+    const suspended = result.actionApplied.kind === 'suspend' || mission.balanceUsdc <= 0
+    if (suspended) {
       mission.status = 'paused'
       mission.esimStatus = 'paused'
     }
 
     await this.repo.save(mission)
+    this.record(mission, 'usage.demo_traffic', usageData(mission, { bytes }))
+    if (suspended) this.record(mission, 'esim.paused', { reason: 'budget_exhausted' })
 
     let cumulativeAmount: string | undefined
     let remaining: string | undefined
@@ -1085,12 +1156,23 @@ export class MissionProductService {
     return true
   }
 
+  /** Logs the highest voucher received, by amount: the signature stays out of the log. */
+  private recordVoucher(mission: ProductMission): void {
+    this.record(mission, 'voucher.received', {
+      cumulativeAtomic: mission.voucher!.cumulativeAtomic,
+      depositAtomic: mission.depositAtomic ?? '0',
+    })
+  }
+
   /** The app sends a cumulative voucher after a usage reading. Funds the next tranche when it covers one. */
   async submitVoucher(missionId: string, voucher: { cumulativeAtomic: string; signature: string }) {
     return this.locks.withChannelLock(missionId, async () => {
       const mission = await this.load(missionId)
       const isNew = await this.acceptVoucher(mission, voucher)
-      if (isNew) await this.repo.save(mission)
+      if (isNew) {
+        await this.repo.save(mission)
+        this.recordVoucher(mission)
+      }
       let fundedNow = 0
       try {
         fundedNow = await this.fundTranche(mission)
@@ -1147,6 +1229,7 @@ export class MissionProductService {
     mission.fundedCents = funded + amount
     mission.pendingFund = undefined
     await this.repo.save(mission)
+    this.record(mission, 'esim.funded', { amountCents: amount, source: 'tranche', fundedCents: mission.fundedCents })
     this.logger({ level: 'info', msg: 'esim tranche funded', missionId: mission.id, amountCents: amount, fundedCents: mission.fundedCents })
     return amount
   }
@@ -1158,6 +1241,7 @@ export class MissionProductService {
     if (mission.chargedBaselineMicroUsd === undefined) {
       mission.chargedBaselineMicroUsd = usage.chargedMicroUsd.toString()
       await this.repo.save(mission)
+      this.record(mission, 'usage.baseline', { chargedBaselineMicroUsd: mission.chargedBaselineMicroUsd })
       return
     }
     const baseline = BigInt(mission.chargedBaselineMicroUsd)
@@ -1169,6 +1253,15 @@ export class MissionProductService {
       applyMeteredBytes(mission, bytes)
       mission.carrierBytes = bytes.toString()
       await this.repo.save(mission)
+      this.record(
+        mission,
+        'usage.reading',
+        usageData(mission, {
+          tripChargedMicroUsd: charged.toString(),
+          walletMicroUsd: usage.walletMicroUsd.toString(),
+          providerStatus: usage.status,
+        }),
+      )
     }
   }
 
@@ -1180,6 +1273,8 @@ export class MissionProductService {
     mission.claimedAtomic = state.claimedAtomic.toString()
     if (state.activeAt) mission.escrowActiveAt = new Date(state.activeAt * 1000).toISOString()
     await this.repo.save(mission)
+    // The claim landed earlier; its transaction is not known here.
+    this.record(mission, 'escrow.claim', { txHash: null, cumulativeAtomic: mission.claimedAtomic, source: 'chain' })
     return true
   }
 
@@ -1225,6 +1320,7 @@ export class MissionProductService {
     // A claim restarts the escrow's refund timeout.
     mission.escrowActiveAt = record.at
     await this.repo.save(mission)
+    this.record(mission, 'escrow.claim', { txHash, cumulativeAtomic: record.cumulativeAtomic, source: 'backend' })
     this.logger({ level: 'info', msg: 'escrow claim', missionId: mission.id, txHash, cumulativeAtomic: record.cumulativeAtomic })
     return record
   }
@@ -1276,6 +1372,7 @@ export class MissionProductService {
       }
       if (voucher && (await this.acceptVoucher(mission, voucher))) {
         await this.repo.save(mission)
+        this.recordVoucher(mission)
       }
       return this.closeWithVoucher(mission)
     })

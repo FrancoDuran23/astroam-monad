@@ -147,6 +147,16 @@ export function createProductRouter(service: MissionProductService): Router {
     }
   })
 
+  // 7b. Mission log: what happened to the trip, oldest first. Open like the mission itself.
+  router.get('/missions/:id/logs', async (req: Request, res: Response) => {
+    try {
+      const entries = await service.getMissionLog(getId(req))
+      res.json({ missionId: getId(req), entries })
+    } catch (err) {
+      res.status(404).json({ error: 'not_found', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
   // 8. Pause Mission
   router.post('/missions/:id/pause', requireAuthIfNeeded, async (req: Request, res: Response) => {
     try {
