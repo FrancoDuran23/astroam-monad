@@ -16,8 +16,9 @@ can run in parallel; a later wave starts when the earlier one is integrated.
 | 04 | [Hosting files](04-hosting.md) | 1 |
 | 05 | [Rail for escrow v4](05-rail-v4.md) | 2 |
 | 07 | [Frontend: refund after the timeout](07-frontend-timeout-refund.md) | 2 |
+| 08 | [Deploy script and real-run preflight](08-deploy-and-preflight.md) | 2 |
+| 11 | [A claim collects what was used](11-claim-bounded-by-usage.md) | 3 |
 | 06 | [Mission log](06-mission-log.md) | 3 |
-| 08 | [Deploy script and real-run preflight](08-deploy-and-preflight.md) | 3 |
 | 09 | [README and documents](09-readme-and-docs.md) | 4 |
 | 10 | [English everywhere](10-english.md) | 5 |
 
