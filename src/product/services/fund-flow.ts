@@ -112,18 +112,21 @@ export type AutoCloseReason = NonNullable<ProductMission["autoCloseReason"]>;
 
 /**
  * Why the backend should close this trip by itself now, or null to leave it
- * open. `timeoutSeconds` is the escrow's refund timeout.
+ * open. `timeoutSeconds` is the escrow's refund timeout. `usedAtomic` is what
+ * the trip has used, the figure a claim and a close settle: the deposit is
+ * spent when the usage reaches it. A voucher alone never decides that, it is
+ * a ceiling the app signs ahead of usage.
  */
 export function autoCloseReason(
   mission: ProductMission,
+  usedAtomic: bigint,
   config: FundFlowConfig,
   now: Date,
   timeoutSeconds: number,
 ): AutoCloseReason | null {
   const nowMs = now.getTime();
   const deposit = BigInt(mission.depositAtomic ?? "0");
-  const voucher = BigInt(mission.voucher?.cumulativeAtomic ?? "0");
-  if (deposit > 0n && voucher >= deposit) return "deposit_spent";
+  if (deposit > 0n && usedAtomic >= deposit) return "deposit_spent";
 
   const tripEnd = Date.parse(`${mission.endDate}T00:00:00Z`);
   if (Number.isFinite(tripEnd) && nowMs >= tripEnd + (24 * 60 * 60 + config.tripEndGraceSeconds) * 1000) {

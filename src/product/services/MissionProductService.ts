@@ -753,9 +753,16 @@ export class MissionProductService {
     })
   }
 
-  /** Assumes the caller holds the mission's channel lock. */
+  /**
+   * Assumes the caller holds the mission's channel lock. Finishing a trip that
+   * is already completed returns the same result and sends nothing.
+   */
   private async finishMissionLocked(missionId: string) {
     const mission = await this.load(missionId)
+    if (mission.status === 'completed') {
+      // A trip with no close of any kind recorded was completed with nothing to settle.
+      return this.finishResult(mission, mission.closeTxHash || mission.settlement ? 'closed' : 'nothing_to_close')
+    }
     if (!mission.channelId) throw new Error('This mission has no payment channel to close')
     if (this.isLiveMode() && !this.rail.isLive) {
       throw unavailable('payments are simulated; configure a live payment rail for live mode')
@@ -764,41 +771,106 @@ export class MissionProductService {
     // Settle exactly what was used, in integer units (never a float): the
     // same figure the claims collected up to.
     const settlement = await this.settlementFor(mission)
-    const outcome = await this.rail.closeChannel(mission.channelId, atomicToRaw(settlement.settleAtomic))
-    if (outcome.kind === 'failed' || outcome.kind === 'blocked') {
-      throw new Error(`Could not close the payment channel: ${outcome.detail}`)
-    }
+    const kind = await this.closeEscrow(mission, settlement, settlement.settleAtomic)
+    return this.finishResult(mission, kind === 'settled_on_chain' ? 'closed' : kind)
+  }
 
-    if (mission.iccid) {
-      try {
-        await this.connectivity.refundUnused(mission.iccid)
-      } catch {
-        // The eSIM wallet is reconciled by the session closer.
-      }
-    }
-
-    mission.status = 'completed'
-    mission.esimStatus = 'disabled'
-    if (outcome.kind === 'nothing_to_close') {
-      mission.settledUsdc = 0
-      mission.refundedUsdc = mission.budgetUsdc
-    } else {
-      mission.closeTxHash = outcome.txHash
-      mission.closeExplorerUrl = outcome.explorerUrl
-      mission.settledUsdc = rawToUsdc(outcome.settledRaw)
-      if (outcome.kind === 'closed') mission.refundedUsdc = rawToUsdc(outcome.refundedRaw)
-      this.recordClosedAboveUsage(mission, settlement.usedAtomic, rawToAtomicFloor(outcome.settledRaw))
-    }
-    await this.repo.save(mission)
-
+  private finishResult(mission: ProductMission, closeKind: string) {
     return {
       status: 'completed',
-      closeKind: outcome.kind,
+      closeKind,
       txHash: mission.closeTxHash,
       explorerUrl: mission.closeExplorerUrl,
       settledUsdc: mission.settledUsdc,
       refundedUsdc: mission.refundedUsdc,
     }
+  }
+
+  /**
+   * The one way a trip's escrow is closed and the trip recorded as completed,
+   * for the traveler's finish, their final voucher and the automatic close.
+   *
+   * - The escrow is closed first. The eSIM wallet is only defunded once the
+   *   escrow is known to be closed, so a close that fails leaves the trip as
+   *   it was, with its line funded.
+   * - A close that fails while the chain reports the escrow settled (it
+   *   landed, but the record was never saved, or it was closed from outside
+   *   the app) is not an error: the trip is recorded as completed from the
+   *   chain, with no close transaction hash. The chain does not keep what the
+   *   close paid once it is settled, so the figure is what this close would
+   *   have settled, and never below what the chain says was claimed.
+   *
+   * Returns what happened to the channel. Assumes the channel lock is held.
+   */
+  private async closeEscrow(
+    mission: ProductMission,
+    settlement: { usedAtomic: bigint },
+    settleAtomic: bigint,
+    reason?: AutoCloseReason,
+  ): Promise<'closed' | 'closed_unverified' | 'nothing_to_close' | 'settled_on_chain'> {
+    const outcome = await this.rail.closeChannel(mission.channelId!, atomicToRaw(settleAtomic))
+    if (outcome.kind === 'blocked') {
+      throw new Error(`Could not close the payment channel: ${outcome.detail}`)
+    }
+
+    let chainDeposit: bigint | undefined
+    let chainClaimed = 0n
+    if (outcome.kind === 'failed') {
+      if (this.rail.readEscrowState) {
+        const state = await this.rail.readEscrowState(mission.channelId!)
+        if (!state?.settled) throw new Error(`Could not close the payment channel: ${outcome.detail}`)
+        chainDeposit = state.depositAtomic
+        chainClaimed = state.claimedAtomic
+      } else if (!outcome.detail.includes('already settled') && !outcome.detail.includes('already closed')) {
+        throw new Error(`Could not close the payment channel: ${outcome.detail}`)
+      }
+    }
+
+    // The escrow is closed: only now does the eSIM wallet go back to the reseller.
+    if (mission.iccid) {
+      try {
+        await this.connectivity.refundUnused(mission.iccid)
+      } catch {
+        // The eSIM wallet is reconciled by the session closer; the USDC refund does not wait for it.
+      }
+    }
+
+    const deposit = chainDeposit ?? BigInt(mission.depositAtomic ?? '0')
+    let settled: bigint
+    let kind: 'closed' | 'closed_unverified' | 'nothing_to_close' | 'settled_on_chain'
+    if (outcome.kind === 'closed' || outcome.kind === 'closed_unverified') {
+      settled = rawToAtomicFloor(outcome.settledRaw)
+      kind = outcome.kind
+    } else if (outcome.kind === 'nothing_to_close') {
+      settled = 0n
+      kind = 'nothing_to_close'
+    } else {
+      settled = settleAtomic > chainClaimed ? settleAtomic : chainClaimed
+      if (deposit > 0n && settled > deposit) settled = deposit
+      kind = 'settled_on_chain'
+    }
+
+    mission.status = 'completed'
+    mission.esimStatus = 'disabled'
+    if (kind === 'nothing_to_close') {
+      mission.settledUsdc = 0
+      mission.refundedUsdc = mission.budgetUsdc
+    } else {
+      mission.settlement = 'close'
+      mission.settledUsdc = Number(formatAtomic(settled))
+      mission.refundedUsdc =
+        outcome.kind === 'closed' ? rawToUsdc(outcome.refundedRaw) : Number(formatAtomic(deposit > settled ? deposit - settled : 0n))
+      mission.claimedAtomic = settled.toString()
+      if (outcome.kind === 'closed' || outcome.kind === 'closed_unverified') {
+        mission.closeTxHash = outcome.txHash
+        mission.closeExplorerUrl = outcome.explorerUrl
+        this.recordClosedAboveUsage(mission, settlement.usedAtomic, settled)
+      }
+    }
+    if (reason) mission.autoCloseReason = reason
+    await this.repo.save(mission)
+    this.logger({ level: 'info', msg: 'escrow close', missionId: mission.id, txHash: mission.closeTxHash, reason: reason ?? 'traveler' })
+    return kind
   }
 
   /**
@@ -1162,14 +1234,6 @@ export class MissionProductService {
     if (!mission.channelId || !mission.voucher) {
       throw new Error('There is no signed voucher to close this trip with')
     }
-    if (mission.iccid) {
-      try {
-        await this.connectivity.refundUnused(mission.iccid)
-      } catch {
-        // The eSIM wallet goes back to the reseller balance later; the USDC refund does not wait for it.
-      }
-    }
-
     // What was used, never above what the traveler signed. A trip found with
     // more claimed than used settles at the claimed total (see `settlementFor`).
     const settlement = await this.settlementFor(mission)
@@ -1177,40 +1241,7 @@ export class MissionProductService {
     const settleAtomic =
       settlement.aboveUsageAtomic === 0n && settlement.settleAtomic > voucherAtomic ? voucherAtomic : settlement.settleAtomic
 
-    const outcome = await this.rail.closeChannel(
-      mission.channelId,
-      atomicToRaw(settleAtomic),
-    )
-    if (outcome.kind === 'failed') {
-      if (this.rail.readEscrowState) {
-        const state = await this.rail.readEscrowState(mission.channelId)
-        if (!state?.settled) {
-          throw new Error(`Could not close channel: ${outcome.detail}`)
-        }
-      } else if (!outcome.detail.includes('already settled') && !outcome.detail.includes('already closed')) {
-        throw new Error(`Could not close channel: ${outcome.detail}`)
-      }
-    }
-
-    const settled =
-      (outcome.kind === 'closed' || outcome.kind === 'closed_unverified') && outcome.settledRaw !== undefined
-        ? rawToAtomicFloor(outcome.settledRaw)
-        : settleAtomic
-    const deposit = BigInt(mission.depositAtomic ?? '0')
-    mission.status = 'completed'
-    mission.esimStatus = 'disabled'
-    mission.settlement = 'close'
-    mission.settledUsdc = Number(formatAtomic(settled))
-    mission.refundedUsdc = Number(formatAtomic(deposit > settled ? deposit - settled : 0n))
-    mission.claimedAtomic = settled.toString()
-    if (outcome.kind === 'closed' || outcome.kind === 'closed_unverified') {
-      mission.closeTxHash = outcome.txHash
-      mission.closeExplorerUrl = outcome.explorerUrl
-      this.recordClosedAboveUsage(mission, settlement.usedAtomic, settled)
-    }
-    if (reason) mission.autoCloseReason = reason
-    await this.repo.save(mission)
-    this.logger({ level: 'info', msg: 'escrow close', missionId: mission.id, txHash: mission.closeTxHash, reason: reason ?? 'traveler' })
+    await this.closeEscrow(mission, settlement, settleAtomic, reason)
     return {
       txHash: mission.closeTxHash,
       status: 'completed' as const,
@@ -1273,7 +1304,7 @@ export class MissionProductService {
 
         await this.readProviderUsage(mission)
 
-        const reason = autoCloseReason(mission, this.fundFlow, now, this.timeoutSeconds)
+        const reason = autoCloseReason(mission, usedAtomic(mission), this.fundFlow, now, this.timeoutSeconds)
         if (reason && mission.voucher) {
           const closed = await this.closeWithVoucher(mission, reason)
           result.closeTxHash = closed.txHash
