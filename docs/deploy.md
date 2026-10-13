@@ -5,7 +5,7 @@ Two processes: the API (this repo root, as a Docker image on Render) and the tra
 Before you start you need:
 
 - The deployed `AstroAmEscrow` address on Monad testnet (`MONAD_ESCROW_ADDRESS`). `npm run monad:deploy` prints it; the record of deployments is in `docs/despliegues-monad.md`.
-- The private key of the account the escrow trusts to close and collect (the operator). It needs testnet MON for gas ([faucet.monad.xyz](https://faucet.monad.xyz)). Whoever holds it sets it on the host as `MONAD_OPERATOR_PRIVATE_KEY`; the process never logs it. Without it the API still serves the app and a MetaMask deposit still lands in the escrow, but the API cannot close a trip or collect: the traveler recovers the deposit through the contract's refund after the timeout.
+- The private key of the account the escrow trusts to close and collect (the operator). It needs testnet MON for gas ([faucet.monad.xyz](https://faucet.monad.xyz)). Whoever holds it sets it on the host as `MONAD_OPERATOR_PRIVATE_KEY`; the process never logs it. Without it the API does not start: with `PAYMENT_RAIL=monad` it logs which variable is missing and exits. With a key that is neither the contract's `operator()` nor its `payee()` the API starts, but `GET /ready` answers 503 with `operator_not_authorized`: a MetaMask deposit would still land in the escrow, the API could not close the trip or collect, and the traveler would recover the deposit only through the contract's refund after the timeout. The operator never receives USDC: the contract pays the payee.
 
 The eSIM provider stays on `CONNECTIVITY_PROVIDER=fake`. Do not set `citrus` and do not put a Citrus API key on a public demo. Leave `CITRUS_API_KEY` and `CITRUS_WEBHOOK_SECRET` empty.
 
@@ -21,8 +21,6 @@ The eSIM provider stays on `CONNECTIVITY_PROVIDER=fake`. Do not set `citrus` and
 3. Apply the blueprint and wait for the first deploy. Render gives the service a public URL; note it as `<api-url>`.
 
 The values already in `render.yaml` are `PAYMENT_RAIL=monad`, `CONNECTIVITY_PROVIDER=fake`, `ASTROAM_LIVE_ENABLED=false`, `ENABLE_DEMO_TRAFFIC=true` and `DATA_DIR=/app/data`. The image sets `HOST=0.0.0.0` and `PORT=8080` itself. The RPC, chain id, USDC address and explorer default to Monad testnet; override `MONAD_RPC_URL`, `MONAD_CHAIN_ID`, `MONAD_USDC_ADDRESS` or `MONAD_EXPLORER_URL` in the dashboard only if you need to.
-
-Until spec 05 lands, the code still reads the operator key under its old name, `MONAD_PAYEE_PRIVATE_KEY`. The blueprint already uses the final name, `MONAD_OPERATOR_PRIVATE_KEY`. If you deploy a build from before that rename, add `MONAD_PAYEE_PRIVATE_KEY` with the same value by hand.
 
 ## 2. Traveler app on Vercel
 

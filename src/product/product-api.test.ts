@@ -228,11 +228,13 @@ test('Unsigned M2 does NOT credit paid quota', async () => {
   const intentRes = await fetch(`${baseUrl}/api/missions/${missionId}/payment-intent`, { method: 'POST' })
   const intentId = ((await intentRes.json()) as { intentId: string }).intentId
 
-  await fetch(`${baseUrl}/api/missions/${missionId}/payment-confirmation`, {
+  // Its own transaction: the deposit of another mission would not pay for this one.
+  const confirmRes = await fetch(`${baseUrl}/api/missions/${missionId}/payment-confirmation`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ intentId, txHash: '0xtest_tx_hash_valid' }),
+    body: JSON.stringify({ intentId, txHash: '0xtest_tx_hash_unsigned' }),
   })
+  assert.equal(confirmRes.status, 200)
 
   await fetch(`${baseUrl}/api/missions/${missionId}/activate`, { method: 'POST' })
 

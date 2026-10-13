@@ -7,6 +7,7 @@ import type { MissionRepository } from './persistence/MissionRepository.ts'
 import type { ProductMission } from './types/mission.ts'
 import { FakeRail } from '../rails/FakeRail.ts'
 import { FakeProvider } from '../providers/connectivity/FakeProvider.ts'
+import { escrowIdForMission } from '../shared/monad/voucher.ts'
 
 class MemoryRepo implements MissionRepository {
   private store = new Map<string, ProductMission>()
@@ -66,7 +67,8 @@ async function activeMission(budgetUsdc: number): Promise<string> {
     dailyLimitUsdc: budgetUsdc,
   })
   const intent = await service.createPaymentIntent(id)
-  await service.confirmPayment(id, intent.intentId, 'demo_tx_hash')
+  // One transaction per mission: a hash names a single deposit.
+  await service.confirmPayment(id, intent.intentId, `demo_tx_${id}`)
   await service.activateMission(id)
   return id
 }
@@ -74,7 +76,8 @@ async function activeMission(budgetUsdc: number): Promise<string> {
 test('el depósito abre un canal de pago para la misión', async () => {
   const id = await activeMission(5)
   const mission = await service.getMission(id)
-  assert.match(mission.channelId ?? '', /^0x[0-9a-f]{40}$/)
+  // The mission's own escrow id, as on chain.
+  assert.equal(mission.channelId, escrowIdForMission(id))
 })
 
 test('el tráfico de demo firma vales y cobra la tarifa del destino, sin pausar antes de tiempo', async () => {
@@ -118,7 +121,7 @@ async function paidMission(budgetUsdc: number): Promise<string> {
     dailyLimitUsdc: budgetUsdc,
   })
   const intent = await service.createPaymentIntent(id)
-  await service.confirmPayment(id, intent.intentId, 'demo_tx_hash')
+  await service.confirmPayment(id, intent.intentId, `demo_tx_${id}`)
   return id
 }
 

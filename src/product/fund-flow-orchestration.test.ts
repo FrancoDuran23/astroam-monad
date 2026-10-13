@@ -26,13 +26,13 @@ class MemoryRepo implements MissionRepository {
 }
 
 const BRASIL = { id: "br", name: "Brasil", flag: "BR", network: "Vivo", coverage: "4G/5G", pricePerMbUsdc: 0.0025 };
-const TREASURY = "0x6666666666666666666666666666666666666666";
 const MB = 1_000_000;
 
-function mockVoucher(atomic: bigint) {
+/** The voucher the traveler's app signs with the trip's session key for a running total. */
+async function voucher(trip: { escrowId: string }, atomic: bigint) {
   return {
     cumulativeAtomic: atomic.toString(),
-    signature: `0x${"ab".repeat(65)}`,
+    signature: await rail.signVoucher(trip.escrowId, atomic),
   };
 }
 
@@ -74,7 +74,8 @@ async function openTrip(budgetUsdc = 10, endDate = "2026-10-12") {
     dailyLimitUsdc: budgetUsdc,
   });
   const intent = await service.createPaymentIntent(created.id);
-  await service.confirmPayment(created.id, intent.intentId, "0xdeposit_tx_hash_123");
+  // One transaction per trip: a hash names a single deposit.
+  await service.confirmPayment(created.id, intent.intentId, `0xdeposit_${created.id}`);
   const activated = await service.activateMission(created.id);
   const mission = await service.getMission(created.id);
   return { id: created.id, escrowId: mission.escrowId!, sessionKey: mission.sessionKey!, iccid: activated.esim.iccid };
@@ -84,7 +85,7 @@ async function openTrip(budgetUsdc = 10, endDate = "2026-10-12") {
 async function useAndSign(trip: Awaited<ReturnType<typeof openTrip>>, mb: number) {
   await service.processDemoTraffic(trip.id, mb * MB);
   const request = await service.voucherRequest(trip.id);
-  return service.submitVoucher(trip.id, mockVoucher(BigInt(request.cumulativeAtomic)));
+  return service.submitVoucher(trip.id, await voucher(trip, BigInt(request.cumulativeAtomic)));
 }
 
 test("the tranche rule: one tranche past the voucher, never past what the deposit pays for", () => {
@@ -149,11 +150,32 @@ test("a voucher is refused when the amount exceeds deposit or is lower than held
   const trip = await openTrip();
   await service.processDemoTraffic(trip.id, 400 * MB);
 
-  await assert.rejects(service.submitVoucher(trip.id, mockVoucher(10_000_001n)), /more than the deposit/);
+  await assert.rejects(service.submitVoucher(trip.id, await voucher(trip, 10_000_001n)), /more than the deposit/);
 
-  await service.submitVoucher(trip.id, mockVoucher(1_000_000n));
-  await assert.rejects(service.submitVoucher(trip.id, mockVoucher(500_000n)), /higher voucher was already received/);
+  await service.submitVoucher(trip.id, await voucher(trip, 1_000_000n));
+  await assert.rejects(service.submitVoucher(trip.id, await voucher(trip, 500_000n)), /higher voucher was already received/);
   assert.equal((await service.voucherRequest(trip.id)).signedAtomic, "1000000");
+});
+
+test("a voucher the trip's session key did not sign is refused and funds nothing", async () => {
+  const trip = await openTrip();
+  const other = await openTrip();
+  await service.processDemoTraffic(trip.id, 1200 * MB);
+
+  // Signed for another trip's channel, and not a signature at all.
+  const forged = [
+    { cumulativeAtomic: "3000000", signature: await rail.signVoucher(other.escrowId, 3_000_000n) },
+    { cumulativeAtomic: "3000000", signature: `0x${"ab".repeat(65)}` },
+  ];
+  for (const bad of forged) {
+    await assert.rejects(service.submitVoucher(trip.id, bad), /not accepted by the payment rail: bad_signature/);
+  }
+
+  const mission = await service.getMission(trip.id);
+  assert.equal(mission.voucher, undefined);
+  assert.equal(mission.fundedCents, 250);
+  assert.equal((await service.advance(trip.id, clock)).claimTxHash, undefined);
+  assert.equal(rail.escrow.payeeBalance, 0n);
 });
 
 test("the job claims once the voucher holds a tranche, and the claim restarts the timeout", async () => {
@@ -189,17 +211,20 @@ test("the traveler ends the trip and the backend closes with the session voucher
 
   const quote = await service.voucherRequest(trip.id);
   assert.equal(quote.cumulativeAtomic, "3500000");
-  const closed = await service.settleMission(trip.id, mockVoucher(3_500_000n));
+  const closed = await service.settleMission(trip.id, await voucher(trip, 3_500_000n));
 
   assert.equal(closed.status, "completed");
   assert.ok(closed.txHash);
   assert.equal(closed.settledUsdc, 3.5);
   assert.equal(closed.refundedUsdc, 6.5);
   assert.equal(provider.sim(trip.iccid).defundPending, true);
+  // The payee holds the claim plus what the close added: 3.5 USDC in all.
+  assert.equal(rail.escrow.payeeBalance, 3_500_000n);
 
   // Asking again returns the same close instead of sending another.
-  const again = await service.settleMission(trip.id, mockVoucher(3_500_000n));
+  const again = await service.settleMission(trip.id, await voucher(trip, 3_500_000n));
   assert.equal(again.txHash, closed.txHash);
+  assert.equal(rail.escrow.payeeBalance, 3_500_000n);
 });
 
 test("the backend closes by itself a day before the escrow refund timeout", async () => {
@@ -256,26 +281,22 @@ test("what the provider charges becomes metered usage on the next pass", async (
   assert.equal(mission.meteredBytes, "240000000");
 });
 
-test("the job advances every open trip and sweeps what was collected to the treasury", async () => {
+test("the job advances every open trip, and what it claims is paid straight to the payee", async () => {
   const one = await openTrip();
   const two = await openTrip();
   await useAndSign(one, 1200); // 3 USDC
   await useAndSign(two, 1600); // 4 USDC
 
-  const deps = {
-    service,
-    rail,
-    treasury: { address: TREASURY, minAtomic: 5_000_000n },
-    now: () => clock,
-  };
+  const deps = { service, now: () => clock };
   const tick = await runFundFlowOnce(deps);
   assert.equal(tick.advanced.length, 2);
   assert.ok(tick.advanced.every((a) => a.claimTxHash));
-  assert.ok(tick.sweepTxHash);
-  assert.equal(rail.swept.get(TREASURY), 7_000_000n);
+  assert.equal(rail.escrow.payeeBalance, 7_000_000n);
 
-  // Below the minimum, the next tick sweeps nothing.
-  assert.equal((await runFundFlowOnce(deps)).sweepTxHash, undefined);
+  // Nothing new was signed: the next tick claims nothing and the payee holds the same.
+  const next = await runFundFlowOnce(deps);
+  assert.ok(next.advanced.every((a) => a.claimTxHash === undefined && a.error === undefined));
+  assert.equal(rail.escrow.payeeBalance, 7_000_000n);
 });
 
 test("ending a trip through the backend needs the final voucher from the traveler", async () => {

@@ -55,14 +55,20 @@ export function createServerApp(options: CreateServerAppOptions = {}): Express {
   app.get("/ready", async (_req, res, next) => {
     try {
       const caps = await productService.getCapabilities();
-      res.json({
-        status: "ready",
+      const body = {
         network: caps.network,
         paymentRail: caps.paymentRail,
         paymentsLive: caps.paymentsLive,
         mode: caps.mode,
         checkedAt: new Date().toISOString(),
-      });
+      };
+      // Not ready while the rail's key cannot collect or close on the escrow.
+      const readiness = await productService.getReadiness();
+      if (!readiness.ready) {
+        res.status(503).json({ status: "unavailable", reason: readiness.reason, detail: readiness.detail, ...body });
+        return;
+      }
+      res.json({ status: "ready", ...body });
     } catch (error) {
       next(error);
     }

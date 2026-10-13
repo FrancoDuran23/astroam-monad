@@ -1,6 +1,6 @@
 import type { ConnectivityProvider } from '../../providers/connectivity/ConnectivityProvider.ts'
 import type { MissionRepository } from '../persistence/MissionRepository.ts'
-import type { Capabilities, ClaimRecord, DestinationInfo, ProductMission, PublicEsimInfo } from '../types/mission.ts'
+import type { Capabilities, ClaimRecord, DestinationInfo, ProductMission, PublicEsimInfo, TopUpRecord } from '../types/mission.ts'
 import { IntegratedMeterService } from '../../meter/meter-service.ts'
 import { computeCostRaw, type ChannelBalancePort } from '../../services/PolicyEnforcer.ts'
 import { createConnectivitySession, type ConnectivitySession } from '../../models/ConnectivitySession.ts'
@@ -54,6 +54,29 @@ function envRaw(key: string): bigint | undefined {
   const value = process.env[key]
   return value ? parseNonNegativeIntegerRaw(value) : undefined
 }
+
+/** The same transaction, however the caller wrote its hash. */
+function sameTx(a: string | undefined, b: string): boolean {
+  return a !== undefined && a.trim().toLowerCase() === b.trim().toLowerCase()
+}
+
+/**
+ * Sets what the trip can spend to what its channel holds. The figures are
+ * the chain's total, set and never added to, so confirming a deposit again
+ * cannot raise them.
+ */
+function applyChannelDeposit(mission: ProductMission, depositRaw: bigint): void {
+  const depositAtomic = rawToAtomicCeil(depositRaw)
+  mission.depositAtomic = depositAtomic.toString()
+  mission.budgetUsdc = Number(formatAtomic(depositAtomic))
+  mission.balanceUsdc = Math.max(0, parseFloat((mission.budgetUsdc - mission.consumedUsdc).toFixed(6)))
+}
+
+/**
+ * Reasons that are no verdict on the payment: the chain could not be asked,
+ * or has not included the transaction yet. Asking again may succeed.
+ */
+const UNDECIDED_DEPOSIT_REASONS = new Set(['tx_not_found'])
 
 function unavailable(message: string): Error {
   const err = new Error(`503: ${message}`)
@@ -156,6 +179,17 @@ export class MissionProductService {
     }
   }
 
+  /**
+   * Whether the server can do its part of a trip. Not ready when the payment
+   * rail's key is not allowed to collect and close: deposits would still
+   * land in the escrow, and nobody here could settle them.
+   */
+  async getReadiness(): Promise<{ ready: true } | { ready: false; reason: string; detail: string }> {
+    if (!this.rail.checkOperator) return { ready: true }
+    const check = await this.rail.checkOperator()
+    return check.authorized ? { ready: true } : { ready: false, reason: check.reason, detail: check.detail }
+  }
+
   async createMission(payload: {
     userId?: string
     destination: DestinationInfo
@@ -240,7 +274,16 @@ export class MissionProductService {
     return this.locks.withChannelLock(missionId, () => this.confirmPaymentLocked(missionId, intentId, txHash))
   }
 
-  /** Assumes the caller holds the mission's channel lock. */
+  /**
+   * Assumes the caller holds the mission's channel lock.
+   *
+   * The deposit is checked against the chain alone: the rail derives the
+   * escrow from the mission id, so only a deposit into this mission's own
+   * escrow can pay for it, and a server restarted since the intent confirms
+   * it all the same. `intentId` is a label and decides nothing. A mission is
+   * paid once: its record keeps the transaction, and any later confirmation
+   * returns that result without asking the rail.
+   */
   private async confirmPaymentLocked(missionId: string, intentId: string, txHash: string) {
     const mission = await this.load(missionId)
 
@@ -258,10 +301,18 @@ export class MissionProductService {
       throw unavailable('payments are simulated; configure a live payment rail for live mode')
     }
 
-    const result = await this.rail.confirmDeposit({ missionId, intentId, txHash, purpose: 'mission' })
+    const result = await this.rail.confirmDeposit({
+      missionId,
+      txHash,
+      purpose: 'mission',
+      amountUsdc: mission.budgetUsdc,
+    })
     if (!result.valid) {
-      mission.paymentStatus = 'failed'
-      await this.repo.save(mission)
+      // Only a verdict marks the payment failed; a later confirmation can still pay.
+      if (!UNDECIDED_DEPOSIT_REASONS.has(result.reason)) {
+        mission.paymentStatus = 'failed'
+        await this.repo.save(mission)
+      }
       throw new Error(`Deposit for intent ${intentId} was not accepted: ${result.reason}`)
     }
 
@@ -271,7 +322,8 @@ export class MissionProductService {
     mission.depositExplorerUrl = result.explorerUrl
     mission.channelId = result.channelId
     mission.escrowId = result.channelId
-    mission.depositAtomic = rawToAtomicCeil(result.depositRaw).toString()
+    // What the escrow holds, which need not be what the mission asked for.
+    applyChannelDeposit(mission, result.depositRaw)
     mission.depositVerified = true
     if (result.travelerAddress) mission.travelerAddress = result.travelerAddress
     if (result.sessionKey) mission.sessionKey = result.sessionKey
@@ -507,48 +559,81 @@ export class MissionProductService {
     return this.locks.withChannelLock(missionId, () => this.confirmTopUpPaymentLocked(missionId, intentId, txHash))
   }
 
-  /** Assumes the caller holds the mission's channel lock. */
+  /**
+   * Assumes the caller holds the mission's channel lock.
+   *
+   * A top-up is credited once per transaction, and not from memory:
+   *
+   * - The settled top-ups of the mission record are the transactions already
+   *   credited. They are saved with the mission, so they hold across a
+   *   restart; a transaction found there returns its earlier result.
+   * - The budget is the escrow's on-chain total, set and never added to.
+   * - The record is saved before the eSIM wallet is funded, so a crash in
+   *   between cannot fund it a second time.
+   *
+   * `intentId` is a label: it picks which pending top-up the transaction
+   * settles. A transaction that did top up this mission's escrow is credited
+   * even when no pending top-up carries that label.
+   */
   private async confirmTopUpPaymentLocked(missionId: string, intentId: string, txHash: string) {
     const mission = await this.load(missionId)
+    if (!mission.channelId) throw new Error('This mission has no payment channel yet')
 
-    const topup = mission.topups.find((t) => t.intentId === intentId)
-    if (!topup) throw new Error(`Top-up for intent ${intentId} not found`)
-    if (topup.status === 'settled' && topup.txHash) {
-      return { valid: true, status: 'settled', txHash: topup.txHash, explorerUrl: topup.explorerUrl }
+    const credited = mission.topups.find((t) => t.status === 'settled' && sameTx(t.txHash, txHash))
+    if (credited) {
+      return {
+        valid: true,
+        status: 'settled',
+        txHash: credited.txHash!,
+        explorerUrl: credited.explorerUrl,
+        balanceUsdc: mission.balanceUsdc,
+      }
     }
     if (this.isLiveMode() && !this.rail.isLive) {
       throw unavailable('payments are simulated; configure a live payment rail for live mode')
     }
 
+    const pending = mission.topups.find((t) => t.intentId === intentId && t.status === 'pending')
     const result = await this.rail.confirmDeposit({
       missionId,
-      intentId,
       txHash,
       purpose: 'topup',
       channelId: mission.channelId,
+      amountUsdc: pending?.amountUsdc,
     })
     if (!result.valid) throw new Error(`Top-up was not accepted: ${result.reason}`)
 
+    // What the transaction added, which need not be what the intent asked for.
+    const addedUsdc = rawToUsdc(result.amountRaw)
+    const topup: TopUpRecord = pending ?? {
+      id: `top_${Date.now()}`,
+      intentId,
+      amountUsdc: addedUsdc,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    }
+    if (!pending) mission.topups.push(topup)
+    topup.amountUsdc = addedUsdc
+    topup.status = 'settled'
+    topup.txHash = result.txHash
+    topup.explorerUrl = result.explorerUrl
+    applyChannelDeposit(mission, result.depositRaw)
+    // A top-up restarts the escrow's refund timeout.
+    if (result.escrowActiveAt) mission.escrowActiveAt = result.escrowActiveAt
+    if (mission.status === 'paused' && mission.balanceUsdc > 0) {
+      mission.status = 'active'
+      mission.esimStatus = 'active'
+    }
+    await this.repo.save(mission)
+
     if (mission.iccid) {
       try {
-        const amountCents = Math.max(1, Math.round(topup.amountUsdc * 100))
-        await this.connectivity.topUp(mission.iccid, amountCents)
+        await this.connectivity.topUp(mission.iccid, Math.max(1, Math.round(addedUsdc * 100)))
       } catch {
         // The eSIM wallet catches up on the next funding pass.
       }
     }
 
-    topup.status = 'settled'
-    topup.txHash = result.txHash
-    topup.explorerUrl = result.explorerUrl
-    mission.balanceUsdc += topup.amountUsdc
-    mission.budgetUsdc += topup.amountUsdc
-    if (mission.status === 'paused' && mission.balanceUsdc > 0) {
-      mission.status = 'active'
-      mission.esimStatus = 'active'
-    }
-
-    await this.repo.save(mission)
     return {
       valid: true,
       status: 'settled',

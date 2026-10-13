@@ -7,6 +7,8 @@ import type { AddressInfo } from "node:net";
 import { createServerApp } from "./app.ts";
 import { bootProductService } from "../product/runtime/product-boot.ts";
 import type { MissionProductService } from "../product/services/MissionProductService.ts";
+import { FakeRail } from "../rails/FakeRail.ts";
+import type { OperatorCheck } from "../rails/PaymentRail.ts";
 
 async function withApp(fn: (baseUrl: string) => Promise<void>, productService?: MissionProductService) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astroam-app-"));
@@ -39,6 +41,42 @@ test("GET /ready reports the payment rail and mode", async () => {
     assert.equal(body.paymentsLive, false);
     assert.equal(body.mode, "demo");
   });
+});
+
+test("GET /ready is 503 while the rail's key may not collect or close, and 200 once it may", async () => {
+  const account = "0x1111111111111111111111111111111111111111";
+  let check: OperatorCheck = {
+    authorized: false,
+    account,
+    reason: "operator_not_authorized",
+    detail: `${account} is neither the operator nor the payee`,
+  };
+  class KeyedRail extends FakeRail {
+    async checkOperator(): Promise<OperatorCheck> {
+      return check;
+    }
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astroam-app-"));
+  await withApp(async (baseUrl) => {
+    const notReady = await fetch(`${baseUrl}/ready`);
+    assert.equal(notReady.status, 503);
+    const body = (await notReady.json()) as Record<string, unknown>;
+    assert.equal(body.status, "unavailable");
+    assert.equal(body.reason, "operator_not_authorized");
+    assert.match(String(body.detail), /neither the operator nor the payee/);
+    // The process is still alive: only readiness is withheld.
+    assert.equal((await fetch(`${baseUrl}/health`)).status, 200);
+
+    check = { authorized: false, account, reason: "upstream_unavailable", detail: "could not read operator() and payee()" };
+    const unreachable = await fetch(`${baseUrl}/ready`);
+    assert.equal(unreachable.status, 503);
+    assert.equal(((await unreachable.json()) as Record<string, unknown>).reason, "upstream_unavailable");
+
+    check = { authorized: true, account, operator: account, payee: "0x2222222222222222222222222222222222222222" };
+    const ready = await fetch(`${baseUrl}/ready`);
+    assert.equal(ready.status, 200);
+    assert.equal(((await ready.json()) as Record<string, unknown>).status, "ready");
+  }, bootProductService({ DATA_DIR: dir }, new KeyedRail()));
 });
 
 test("the mission API is mounted under /api", async () => {

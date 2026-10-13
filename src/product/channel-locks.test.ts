@@ -201,7 +201,8 @@ test("a claim that landed but was not recorded is taken from the rail, not sent 
   const trip = await openTrip();
   await service.processDemoTraffic(trip.id, 1200 * MB); // 3 USDC
   const request = await service.voucherRequest(trip.id);
-  const voucher = { cumulativeAtomic: request.cumulativeAtomic, signature: `0x${"ab".repeat(65)}` };
+  const signature = await rail.signVoucher(trip.escrowId, BigInt(request.cumulativeAtomic));
+  const voucher = { cumulativeAtomic: request.cumulativeAtomic, signature };
   await service.submitVoucher(trip.id, voucher);
 
   // The claim reaches the chain, and the process dies before saving it.

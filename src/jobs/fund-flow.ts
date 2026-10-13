@@ -1,12 +1,12 @@
 // Fund-flow job: runs the automatic fund flow for every open trip, so
 // nobody has to operate it by hand. Each tick it asks the product service to
 // advance each trip (read usage, fund the next eSIM tranche, claim, close
-// when due) and then sweeps collected USDC to the treasury address.
+// when due). What a claim or a close collects goes from the escrow straight
+// to the payee: the server's key never holds it, so the job moves no funds.
 //
 // One tick never overlaps the next: a slow pass delays the following one.
 
 import type { AdvanceResult } from "../product/services/MissionProductService.ts";
-import type { PaymentRail } from "../rails/PaymentRail.ts";
 
 export const FUND_FLOW_INTERVAL_MS_DEFAULT = 60_000;
 
@@ -15,20 +15,15 @@ export type FundFlowJobDeps = {
     openMissionIds(): Promise<string[]>;
     advance(missionId: string, now?: Date): Promise<AdvanceResult>;
   };
-  rail: PaymentRail;
-  /** Where collected USDC goes (`TREASURY_ADDRESS` or `BRIDGE_LIQUIDATION_ADDRESS`). Without it nothing is swept. */
-  treasury?: { address: string; minAtomic: bigint };
   logger?: (line: Record<string, unknown>) => void;
   now?: () => Date;
 };
 
 export type FundFlowTick = {
   advanced: AdvanceResult[];
-  sweepTxHash?: string;
-  sweepError?: string;
 };
 
-/** One pass over every open trip, then the treasury sweep. Never throws. */
+/** One pass over every open trip. Never throws. */
 export async function runFundFlowOnce(deps: FundFlowJobDeps): Promise<FundFlowTick> {
   const logger = deps.logger ?? (() => {});
   const tick: FundFlowTick = { advanced: [] };
@@ -41,19 +36,6 @@ export async function runFundFlowOnce(deps: FundFlowJobDeps): Promise<FundFlowTi
   }
   for (const id of ids) {
     tick.advanced.push(await deps.service.advance(id, deps.now?.()));
-  }
-
-  if (deps.treasury && deps.rail.sweep) {
-    try {
-      const swept = await deps.rail.sweep({ to: deps.treasury.address, minAtomic: deps.treasury.minAtomic });
-      if (swept) {
-        tick.sweepTxHash = swept.txHash;
-        logger({ level: "info", msg: "treasury sweep", txHash: swept.txHash, amountAtomic: swept.amountAtomic.toString(), to: deps.treasury.address });
-      }
-    } catch (error) {
-      tick.sweepError = error instanceof Error ? error.message : String(error);
-      logger({ level: "error", msg: "treasury sweep failed", detail: tick.sweepError });
-    }
   }
   return tick;
 }
