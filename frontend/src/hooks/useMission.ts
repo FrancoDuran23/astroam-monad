@@ -269,7 +269,7 @@ export function useMission() {
         setEvents(newState.events)
         return {
           status: 'completed',
-          txHash: `demo_close_${Date.now().toString(16)}`,
+          txHash: `demo_close_${Date.now()}`,
           settledUsdc: mission.consumedUsdc,
           refundedUsdc: mission.balanceUsdc,
         }

@@ -5,6 +5,7 @@ import MobileAppShell from '../components/MobileAppShell'
 import ActivityFeed from '../components/dashboard/ActivityFeed'
 import TopUpModal from '../components/dashboard/TopUpModal'
 import { useMission } from '../hooks/useMission'
+import { paymentMode, showDemoTraffic } from '../utils/paymentMode'
 import { DEMO_TRAFFIC_MB, estimateMb, fmtDate, fmtMb, fmtUsdc, shortTx } from '../utils/missionUtils'
 import type { FinishResult } from '../types/mission'
 import { hasSessionKey, shouldWarnMissingSessionKey, MISSING_SESSION_KEY_WARNING } from '../chain/monad'
@@ -48,7 +49,8 @@ export default function ActiveMissionPage() {
   const isCompleted = mission.status === 'completed'
   const pctRemaining = mission.budgetUsdc > 0 ? (mission.balanceUsdc / mission.budgetUsdc) * 100 : 0
   const mbLeft = estimateMb(mission.balanceUsdc, mission.destination.pricePerMbUsdc)
-  const simulated = isDemoMode || !caps?.paymentsLive
+  const simulated = paymentMode(isDemoMode, caps) === 'simulated'
+  const demoTraffic = showDemoTraffic(isDemoMode, caps)
   const networkLabel = simulated ? 'Simulated' : (caps?.paymentRail ?? 'Monad Testnet')
 
   const sessionKeyMissing = shouldWarnMissingSessionKey({
@@ -349,18 +351,20 @@ export default function ActiveMissionPage() {
             VIEW eSIM
           </button>
 
-          <button
-            type="button"
-            disabled={isPaused || actionLoading}
-            onClick={() => void handleSimulate()}
-            className="py-3.5 px-4 rounded-2xl border border-tealbrand/40 bg-tealbrand/10 text-tealbrand font-sans font-bold text-xs uppercase tracking-wider hover:bg-tealbrand/20 hover:shadow-[0_0_18px_rgba(47,208,221,0.35)] disabled:opacity-40 transition-all flex items-center justify-center gap-2 min-h-[48px]"
-          >
-            <span className="material-symbols-outlined text-base">bolt</span>
-            USE {DEMO_TRAFFIC_MB} MB
-          </button>
+          {demoTraffic && (
+            <button
+              type="button"
+              disabled={isPaused || actionLoading}
+              onClick={() => void handleSimulate()}
+              className="py-3.5 px-4 rounded-2xl border border-tealbrand/40 bg-tealbrand/10 text-tealbrand font-sans font-bold text-xs uppercase tracking-wider hover:bg-tealbrand/20 hover:shadow-[0_0_18px_rgba(47,208,221,0.35)] disabled:opacity-40 transition-all flex items-center justify-center gap-2 min-h-[48px]"
+            >
+              <span className="material-symbols-outlined text-base">bolt</span>
+              USE {DEMO_TRAFFIC_MB} MB
+            </button>
+          )}
         </div>
       )}
-      {!isCompleted && !isClosing && (
+      {!isCompleted && !isClosing && demoTraffic && (
         <p className="mb-6 text-center font-mono text-[11px] text-textsecondary">
           “Use {DEMO_TRAFFIC_MB} MB” simulates a reading from the carrier.
           {travelerSigns && ' The app signs a voucher for it first, with no wallet popup.'}
