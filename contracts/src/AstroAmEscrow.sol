@@ -15,9 +15,23 @@ pragma solidity 0.8.24;
 /// closes, `refund` returns everything not yet claimed `timeoutSeconds` after
 /// the last deposit, top-up or claim.
 ///
+/// AstroAm is two accounts. The `payee` is fixed at deployment and is where
+/// every `claim` and `close` payment goes; it can be a cold wallet or a
+/// multisig. The `operator` is the server's hot key: it sends the `claim` and
+/// `close` transactions and never receives funds. The payee may send them too,
+/// and replaces the operator with `setOperator`.
+///
 /// Each claim restarts the timeout, but only with a voucher above what was
-/// already claimed: the payee can never take more than the traveler signed,
-/// though it can delay the refund of the rest by cashing vouchers one by one.
+/// already claimed: the payee can never be paid more than the traveler signed,
+/// though the operator can delay the refund of the rest by cashing vouchers
+/// one by one.
+///
+/// A compromised operator cannot move funds anywhere except to the payee and
+/// the traveler. Against AstroAm it can close a channel early with what was
+/// already claimed, refunding the rest to the traveler, so the usage not yet
+/// claimed is lost. Against the traveler it can at most have the payee paid
+/// the full amount of a voucher the traveler signed, and delay the refund as
+/// above. The payee stops it by setting a new operator.
 contract AstroAmEscrow {
     error ZeroAddress();
     error ZeroAmount();
@@ -27,6 +41,7 @@ contract AstroAmEscrow {
     error AlreadySettled();
     error NotTraveler();
     error NotPayee();
+    error NotOperator();
     error AmountExceedsDeposit();
     error SettleExceedsVoucher();
     error SettleBelowClaimed();
@@ -54,8 +69,11 @@ contract AstroAmEscrow {
     uint256 private constant HALF_ORDER = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
 
     address public immutable usdc;
+    /// Receives every `claim` and `close` payment. Never changes.
     address public immutable payee;
     uint256 public immutable timeoutSeconds;
+    /// Hot key that sends `claim` and `close`. The payee replaces it with `setOperator`.
+    address public operator;
 
     mapping(bytes32 escrowId => Escrow) public escrows;
 
@@ -69,14 +87,16 @@ contract AstroAmEscrow {
     /// included, so `paid + refunded` is always the deposit.
     event Closed(bytes32 indexed escrowId, address indexed traveler, uint256 paid, uint256 refunded);
     event Refunded(bytes32 indexed escrowId, address indexed traveler, uint256 amount);
+    event OperatorChanged(address indexed previous, address indexed current);
 
-    constructor(address usdc_, address payee_, uint256 timeoutSeconds_) {
-        if (usdc_ == address(0) || payee_ == address(0)) revert ZeroAddress();
+    constructor(address usdc_, address payee_, address operator_, uint256 timeoutSeconds_) {
+        if (usdc_ == address(0) || payee_ == address(0) || operator_ == address(0)) revert ZeroAddress();
         if (timeoutSeconds_ == 0) revert ZeroAmount();
         if (_decimalsOf(usdc_) != usdcDecimals) revert UnexpectedDecimals();
 
         usdc = usdc_;
         payee = payee_;
+        operator = operator_;
         timeoutSeconds = timeoutSeconds_;
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(
@@ -87,6 +107,16 @@ contract AstroAmEscrow {
                 address(this)
             )
         );
+    }
+
+    /// @notice Replace the operator. Only the payee: a stolen operator key is
+    /// retired without touching any open channel.
+    function setOperator(address operator_) external {
+        if (msg.sender != payee) revert NotPayee();
+        if (operator_ == address(0)) revert ZeroAddress();
+        address previous = operator;
+        operator = operator_;
+        emit OperatorChanged(previous, operator_);
     }
 
     /// @notice Open the channel: pull `amount` USDC from the traveler and
@@ -122,10 +152,11 @@ contract AstroAmEscrow {
     }
 
     /// @notice Collect the part of `voucherAmount` not claimed yet and keep the
-    /// channel open. Only the payee, only with a voucher above what was already
-    /// claimed. Restarts the refund timeout.
+    /// channel open. Only the operator or the payee, only with a voucher above
+    /// what was already claimed. The payee is paid, whoever calls. Restarts the
+    /// refund timeout.
     function claim(bytes32 escrowId, uint256 voucherAmount, bytes calldata signature) external {
-        if (msg.sender != payee) revert NotPayee();
+        _checkOperator();
         Escrow storage escrow = escrows[escrowId];
         if (escrow.traveler == address(0)) revert EscrowMissing();
         if (escrow.settled) revert AlreadySettled();
@@ -145,9 +176,10 @@ contract AstroAmEscrow {
     /// already claimed and never more than `voucherAmount`, the running total
     /// the traveler's session key (or the traveler) signed. The rest is
     /// refunded. With `settleAmount` equal to what was already claimed no new
-    /// voucher is needed: everything else is refunded.
+    /// voucher is needed: everything else is refunded. Only the operator or
+    /// the payee; the payee is paid, whoever calls.
     function close(bytes32 escrowId, uint256 voucherAmount, bytes calldata signature, uint256 settleAmount) external {
-        if (msg.sender != payee) revert NotPayee();
+        _checkOperator();
         Escrow storage escrow = escrows[escrowId];
         address traveler = escrow.traveler;
         if (traveler == address(0)) revert EscrowMissing();
@@ -186,6 +218,11 @@ contract AstroAmEscrow {
     function voucherHash(bytes32 escrowId, uint256 cumulativeAmount) public view returns (bytes32) {
         bytes32 structHash = keccak256(abi.encode(VOUCHER_TYPEHASH, escrowId, cumulativeAmount));
         return keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+    }
+
+    /// Reverts unless the caller may send `claim` and `close`.
+    function _checkOperator() internal view {
+        if (msg.sender != operator && msg.sender != payee) revert NotOperator();
     }
 
     /// Reverts unless the session key or the traveler signed `voucherAmount`
