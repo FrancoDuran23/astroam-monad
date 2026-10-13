@@ -42,7 +42,7 @@ El flujo en celular opera de la siguiente manera:
 
 ### En la PC de Desarrollo
 - Repositorio con backend y frontend instalados (`npm install` en raíz y en `frontend/`).
-- Archivo `.env` configurado con el contrato de escrow y el riel Monad (`PAYMENT_RAIL=monad`, `MONAD_ESCROW_ADDRESS`, `MONAD_PAYEE_PRIVATE_KEY`).
+- Archivo `.env` configurado con el contrato de escrow y el riel Monad (`PAYMENT_RAIL=monad`, `MONAD_ESCROW_ADDRESS`, `MONAD_OPERATOR_PRIVATE_KEY`).
 
 ---
 

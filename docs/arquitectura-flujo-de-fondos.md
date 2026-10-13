@@ -2,7 +2,87 @@
 
 **Proyecto:** AstroAm · **Ecosistema:** Monad Testnet (Chain ID 10143)  
 **Fecha de formalización:** 7/10/2026 · **Hito:** Metropolis Delivery Milestone (13/10/2026)  
-**Contrato vigente:** `AstroAmEscrow.sol` v3 (`0xe89893d51180e517e2bf175398aad2e6da82c0f9`)
+**Contrato desplegado:** `AstroAmEscrow.sol` v3 (`0xe89893d51180e517e2bf175398aad2e6da82c0f9`). La v4 está implementada y probada, pero **no está desplegada**: ver la sección siguiente.
+
+---
+
+## Update for escrow v4 (2026-10-13, in English)
+
+This update supersedes the parts of the Spanish text below that describe v3.
+Where the two differ, this section wins. The rest of the document (the tranche
+policy to Citrus, the vouchers, the decisions D-1 to D-3) still applies,
+except where marked.
+
+**Status.** v4 is implemented and tested (`contracts/`, `src/rails/`) and is
+**not deployed**. The deployed escrow is still v3 at
+`0xe89893d51180e517e2bf175398aad2e6da82c0f9`, and the only end-to-end testnet
+run is the 2026-10-07 one on v3 ([report](reporte-prueba-e2e-monad.md)). The
+v4 address will be recorded in [despliegues-monad.md](despliegues-monad.md)
+after the team deploys it.
+
+**Operator and payee are two accounts.**
+
+- The `payee` is fixed at deployment and receives every `claim` and `close`
+  payment. It can be a cold wallet or a multisig (a plan, not done), and it is
+  the only account that can call `setOperator`.
+- The `operator` is the server's hot key (`MONAD_OPERATOR_PRIVATE_KEY`). It
+  sends `claim` and `close` and never receives funds. The payee may send them
+  too. Anyone else reverts with `NotOperator`.
+- In v3 one account was both, and a job swept the collected USDC to a
+  treasury. **The treasury sweep no longer exists** in v4: the rail, the
+  fund-flow job and the configuration lost it. `TREASURY_ADDRESS`,
+  `BRIDGE_LIQUIDATION_ADDRESS` and `TREASURY_SWEEP_MIN_USDC` are removed. The
+  "Fase 2" in D-1 that activates `TREASURY_SWEEP_MIN_USDC` is therefore not
+  a switch to flip: it would be new work. Converting the collected USDC to
+  dollars stays a manual step by whoever controls the payee.
+
+**`claim` collects what was used.** The signature is
+`claim(escrowId, voucherAmount, signature, claimTotal)`. The app signs vouchers
+ahead of usage, so a voucher is a ceiling, not a bill. `claimTotal` is the
+running total the payee will have been paid after the call: above what was
+already claimed (`NothingToClaim`) and never above the voucher
+(`ClaimExceedsVoucher`). The backend claims `min(used, voucher)`, so what is
+claimed never exceeds what was used, and `close` at the used amount is never
+below the claimed total. The sequence diagram below shows the v3 call
+(`claim(escrowId, 2.50 USDC, voucherSig)` paying the whole voucher); in v4 the
+amount paid is `claimTotal - claimed`.
+
+**What stays trusted.** The contract cannot know the usage, so the voucher is
+the only bound it enforces on whoever operates the channel. The usage figures
+come from AstroAm's metering and the provider's reports. See the trust model in
+the [README](../README.md#trust-model).
+
+**Mission log.** Spec 06 adds an append-only log per mission
+(`DATA_DIR/mission-log.jsonl`, `GET /api/missions/:id/logs`) of the eSIM, the
+usage, the vouchers and the escrow transactions. It records amounts and
+transaction hashes, never a key, a voucher signature or the eSIM activation
+code. Its event list is in [specs/06-mission-log.md](specs/06-mission-log.md).
+
+**Citrus reseller balance and auto-refill** (note carried over from
+astroam-solana's `docs/decisions/fund-flow-architecture.md`, 2026-10-07; it is
+about Citrus, not about a chain, and was read there on 2026-10-05):
+
+- The reseller balance is one pot in dollars for the whole account. $1.75 comes
+  out of it each time an eSIM is created (that is spend). What is passed to an
+  eSIM (`POST /esim/{iccid}/fund`) moves to that eSIM's own wallet (a transfer,
+  not spend), and `POST /esim/{iccid}/defund` returns what the eSIM did not use.
+- There is no API to load the reseller balance. It is loaded from the Citrus
+  dashboard with a card, minimum $10.
+- Auto-refill (set in the dashboard: "when the balance drops below $X, charge
+  $Y") fires once per crossing of the threshold, and **only real spend
+  triggers it**. For AstroAm the only real spend is creating an eSIM. Tranches
+  to an eSIM never charge the card. If the charge fails (card declined, 3DS)
+  auto-refill turns itself off until someone turns it on again, after a manual
+  top-up.
+- Not confirmed there: what happens when tranches leave the balance below the
+  threshold without triggering anything and an eSIM is created afterwards.
+  `docs/citrus-auto-refill-testing.md` is the plan for that test.
+- Consequence: keep a high threshold (the Solana note suggests $50 with a
+  $100 charge) and watch the balance. The backend does this with
+  `CITRUS_RESELLER_LOW_BALANCE_USD` (default 20).
+
+The sections below keep their v3 text. In section 3.1 read `claim` as the v4
+signature above, and `claim`/`close` as callable by the operator or the payee.
 
 ---
 
@@ -22,7 +102,8 @@ sequenceDiagram
     actor Viajero as Viajero (MetaMask)
     participant Front as Frontend (Session Key)
     participant Escrow as AstroAmEscrow (Monad)
-    participant Back as Backend (FundingService)
+    participant Back as Backend (FundingService, clave operator)
+    participant Payee as Payee
     participant Citrus as Citrus Mobile API
 
     Note over Viajero,Escrow: 1. Apertura del Canal de Pago
@@ -42,15 +123,15 @@ sequenceDiagram
 
     Note over Back,Escrow: 4. Cobranza Parcial en Vuelo (Claim)
     opt Vale no cobrado >= CLAIM_MIN_USDC (2 USDC)
-        Back->>Escrow: claim(escrowId, 2.50 USDC, voucherSig)
-        Escrow->>Back: Transfiere 2.50 USDC a Payee (Escrow sigue abierto)
+        Back->>Escrow: claim(escrowId, voucherAmount, voucherSig, claimTotal)  [v4]
+        Escrow->>Payee: Transfiere claimTotal - claimed al Payee (Escrow sigue abierto)
         Back->>Citrus: Fondeo Tramo 2 ($2.50 USD adicionales si consumo continúa)
     end
 
     Note over Viajero,Escrow: 5. Liquidación Final y Reembolso
     Viajero->>Back: Finalizar viaje ("Finish Trip")
     Back->>Escrow: close(escrowId, voucherAmount, voucherSig, settleAmount)
-    Escrow->>Back: Liquidación neta consumida al Payee
+    Escrow->>Payee: Liquidación neta consumida al Payee
     Escrow->>Viajero: Reembolso automático del remanente (ej. 2.50 USDC)
 ```
 
@@ -58,7 +139,7 @@ sequenceDiagram
 
 ## 3. Componentes del Sistema
 
-### 3.1. Escrow en Monad (`AstroAmEscrow.sol` v3)
+### 3.1. Escrow en Monad (`AstroAmEscrow.sol`, descrito para v3; ver la actualización v4 arriba)
 
 El contrato inteligente actúa como custodia fiduciaria descentralizada e inmutable sobre la red Monad Testnet:
 
@@ -69,7 +150,7 @@ El contrato inteligente actúa como custodia fiduciaria descentralizada e inmuta
 - **Mecanismos clave:**
   1. `deposit(bytes32 escrowId, uint256 amount, address signer)`: Bloquea los USDC del viajero y autoriza de forma explícita la clave de sesión (`sessionKey`) que firmará los vales off-chain.
   2. `topUp(bytes32 escrowId, uint256 amount)`: Permite incrementar el presupuesto disponible en el mismo canal sin reiniciar la sesión ni la eSIM.
-  3. `claim(bytes32 escrowId, uint256 voucherAmount, bytes signature)`: Permite al operador retirar fondos acumulados ya cubiertos por un vale firmado sin cerrar el canal (`voucherAmount - claimed`).
+  3. `claim(bytes32 escrowId, uint256 voucherAmount, bytes signature)`: Permite al payee (en v3) retirar fondos acumulados ya cubiertos por un vale firmado sin cerrar el canal (`voucherAmount - claimed`).
   4. `close(bytes32 escrowId, uint256 voucherAmount, bytes signature, uint256 settleAmount)`: Liquida el uso final real (`settleAmount`), transfiere la diferencia pendiente al payee y reembolsa de inmediato e incondicionalmente el saldo restante (`deposit - settleAmount`) a la billetera del viajero.
   5. `refund(bytes32 escrowId)`: Mecanismo de seguridad "dead-man switch". Si transcurren 30 días (`MONAD_TIMEOUT_SECONDS = 2592000`) desde la última actividad sin que el operador haya cerrado el canal, el viajero (o cualquier tercero) puede reclamar el retorno del 100% de los fondos no reclamados (`deposit - claimed`).
 
@@ -140,7 +221,7 @@ El ciclo concluye mediante dos mecanismos complementarios:
      - Para la reposición de fiat en las tarjetas de crédito de Citrus, el operador realiza swaps cross-chain periódicos hacia redes EVM compatibles con Bridge (ej. Base o Arbitrum) o liquida vía un exchange centralizado (CEX) regulado.
      - Esta aproximación desacopla la experiencia del viajero (que es 100% instantánea y en USDC) de los raíles bancarios tradicionales.
   2. **Fase 2: Mainnet Roadmap (Post-Hackathon):**
-     - Activar el módulo automático de tesorería (`TREASURY_SWEEP_MIN_USDC`) conectando directamente los depósitos con Bridge.xyz o Circle Mint en cuanto desplieguen sus contratos oficiales y raíles fiduciarios sobre Monad Mainnet.
+     - (Nota v4: este módulo, `TREASURY_SWEEP_MIN_USDC`, fue eliminado; sería trabajo nuevo.) Activar un módulo automático de tesorería conectando directamente los depósitos con Bridge.xyz o Circle Mint en cuanto desplieguen sus contratos oficiales y raíles fiduciarios sobre Monad Mainnet.
 
 ### Decisión D-2: Alcance Cerrado para la Entrega Metropolis (13/10/2026)
 
@@ -171,7 +252,7 @@ El ciclo concluye mediante dos mecanismos complementarios:
 | Parámetro | Variable de Entorno | Valor Predeterminado | Propósito |
 |---|---|---|---|
 | Red / Chain ID | `MONAD_CHAIN_ID` | `10143` | Monad Testnet |
-| Contrato Escrow | `MONAD_ESCROW_ADDRESS` | `0xe89893d51180e517e2bf175398aad2e6da82c0f9` | Dirección oficial v3 |
+| Contrato Escrow | `MONAD_ESCROW_ADDRESS` | `0xe89893d51180e517e2bf175398aad2e6da82c0f9` | Dirección de la v3 desplegada; la v4 está pendiente de despliegue |
 | Token de Pago | `MONAD_USDC_ADDRESS` | `0x534b2f3A21130d7a60830c2Df862319e593943A3` | Circle USDC (6 decimales) |
 | Timeout Reembolso | `MONAD_TIMEOUT_SECONDS` | `2592000` (30 días) | Ventana inactividad dead-man |
 | Tamaño de Tramo | `FUNDING_TRANCHE_CENTS` | `250` ($2.50 USD) | Límite por recarga a la eSIM |

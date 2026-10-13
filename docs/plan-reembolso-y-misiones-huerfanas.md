@@ -64,7 +64,7 @@ La cuenta cuadra con las 5 misiones guardadas en `data/missions.json`: el viajer
 1. Una misión completa nueva: depositar, usar MB, cerrar. Leer el evento `Closed(paid, refunded)` y comprobar los saldos en la app y en MetaMask (Tokens → USDC).
 2. Una misión cancelada antes de activar (paso 2) y comprobar el 100 % de reembolso.
 3. `npm run check`, `npm test` y `forge test` en verde.
-4. Actualizar `docs/registro-sesion-2026-10-03.md` y el README con la dirección del contrato y el resultado.
+4. Actualizar el README y `docs/despliegues-monad.md` con la dirección del contrato y el resultado.
 
 ## 3. Orden y esfuerzo estimado
 | # | Qué | Esfuerzo | Quién |

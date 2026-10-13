@@ -5,6 +5,22 @@
 **Entorno:** Monad Testnet (Chain ID `10143` / `0x279f`)  
 **Explorador oficial:** [https://testnet.monadvision.com](https://testnet.monadvision.com)  
 
+> **Note (2026-10-13, in English).** This is the only end-to-end run on Monad
+> testnet, and it ran on **escrow v3** (`0xe89893d51180e517e2bf175398aad2e6da82c0f9`),
+> a **previous version**. The code in this repository now targets escrow v4,
+> which is implemented and tested but not deployed; a run on v4 is pending
+> and will get its own report. Differences that matter when reading this one:
+>
+> - In v3 the payee account was also the account that sent `close`. In v4 the
+>   server key is a separate `operator` that never receives funds.
+> - The run exercised `deposit` and `close`. No `claim` was sent, so the
+>   transaction table has no claim row. v4's `claim` also takes a `claimTotal`.
+> - The eSIM in step 3 is a sample profile (the LPA string contains
+>   `fake.smdp`); no real line was issued, and the 250 MB of traffic is demo
+>   traffic. A real-eSIM run has not settled on Monad (see
+>   [`real-esim.md`](real-esim.md)).
+> - The wording below about the payee "operator" refers to v3.
+
 ---
 
 ## 1. Resumen Ejecutivo

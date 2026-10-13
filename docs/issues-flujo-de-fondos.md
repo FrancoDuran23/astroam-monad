@@ -2,6 +2,30 @@
 
 **Fecha:** 5/10/2026 · **Entrega Metropolis:** 13/10/2026
 
+> **Update 2026-10-13 (in English).** This tracker is the record of the
+> original milestones A to E, written for escrow v3. What changed since is
+> tracked in [`specs/README.md`](specs/README.md), one spec per change:
+>
+> - **B6, the treasury sweep, is gone, not deferred.** In escrow v4 the server
+>   key is an `operator` that never receives funds; the contract pays the
+>   `payee` directly, so there is nothing to sweep. `TREASURY_ADDRESS`,
+>   `BRIDGE_LIQUIDATION_ADDRESS` and `TREASURY_SWEEP_MIN_USDC` are removed.
+> - **A1 and A2 changed shape.** `claim(escrowId, voucherAmount, signature,
+>   claimTotal)` collects what was used, up to the voucher, and `claim` and
+>   `close` are sent by the operator or the payee (specs 01 and 11).
+> - **A4, the redeploy.** v4 is implemented and tested but **not deployed**.
+>   The deployed escrow is v3. Deploying v4 and recording a full run is still
+>   open, and is done by the team with `npm run monad:deploy` and
+>   `npm run real:check` (spec 08, [`deploy.md`](deploy.md)).
+> - **Added since:** channel locks on mission operations (02), payments only
+>   as wallet transactions outside demo mode (03), hosting files (04), a rail
+>   that confirms deposits without process memory (05), the refund button
+>   after the timeout (07), the deploy script and preflight (08), the close
+>   path fixes (12) and the mission log (06). The last two were still being
+>   implemented when this note was written; check the spec files for their
+>   state.
+> - **E1.** The test it records ran on v3. A run on v4 is pending.
+
 Qué le falta a este repo (Monad) para igualar el flujo de fondos automático
 que ya está implementado en
 [`astroam-solana`](https://github.com/FrancoDuran23/astroam-solana)
