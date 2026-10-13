@@ -22,6 +22,7 @@ can run in parallel; a later wave starts when the earlier one is integrated.
 | 06 | [Mission log](06-mission-log.md) | 3 |
 | 09 | [README and documents](09-readme-and-docs.md) | 4 |
 | 10 | [English everywhere](10-english.md) | 5 |
+| 13 | [Mission log gaps](13-mission-log-gaps.md) | 6 |
 
 ## Decisions that shape every spec
 

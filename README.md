@@ -345,12 +345,18 @@ Every trip keeps an append-only history of its eSIM, its usage and its money, so
 - **How to read it:** `GET /api/missions/:id/logs` returns `{ missionId, entries }`, oldest first, or 404 for an unknown trip. Like `GET /api/missions/:id`, it needs no authentication.
 - **Entries:** each line has a format version, a timestamp, the mission id, the eSIM's ICCID (or null), an event type and a small data object.
 - **Failures:** a log write that fails is reported through the logger and never fails the operation it describes.
+- **Evidence:** `npm run log:dump -- <missionId> --out docs/evidence/<date>-<name>.txt` writes one trip's log as the evidence text: readable lines plus the raw JSON lines, with the ICCID's middle digits hidden. It is the same format as astroam-solana's `docs/evidence` file.
 - **Never recorded:** a private key, a voucher signature, an API key or the eSIM's activation code. Money and byte counts are written as digit strings, with transaction hashes where there is one.
 
 | Event | Recorded when |
 |---|---|
+| `mission.created` | the trip is created |
+| `escrow.deposit` | the deposit is confirmed on the chain (the purchase) |
 | `esim.provisioned` | the eSIM is created |
-| `esim.funded` | a funding tranche reaches the provider |
+| `esim.funded` | a funding tranche reaches the provider (`source` is `tranche`, `topup` or `recovered`) |
+| `escrow.topup` | a top-up payment is confirmed on the chain |
+| `esim.provision_failed` | activation fails before an eSIM exists (reseller balance or provider) |
+| `esim.fund_failed` | a tranche or a top-up does not reach the eSIM wallet |
 | `esim.paused`, `esim.resumed` | the line is cut or restored |
 | `usage.baseline`, `usage.reading` | usage is read from the provider |
 | `usage.demo_traffic` | demo traffic is injected |
@@ -422,7 +428,7 @@ Rates from [citrusmobile.com/rates](https://citrusmobile.com/rates), checked 202
 | eSIM | The sample profile from `FakeProvider`. No line is issued. The Citrus adapter exists behind `CONNECTIVITY_PROVIDER=citrus`; the only real-eSIM run was with the Solana build ([pending note](#real-esim)). |
 | Persistence | No database. Missions, vouchers and eSIM records are JSON files under `DATA_DIR`, and are lost on restart on a host without a disk (Render's free plan has none). |
 | Hosting | None yet. No hosted deployment exists. The Docker image has never been built: no Docker access was available where it was written. The same server was started directly with Node only. |
-| Mission log | Implemented and tested: an append-only file under `DATA_DIR` and `GET /api/missions/:id/logs` ([spec 06](docs/specs/06-mission-log.md)). Backend only; no screen shows it. See [Mission log](#mission-log). |
+| Mission log | Implemented and tested: an append-only file under `DATA_DIR` and `GET /api/missions/:id/logs` ([spec 06](docs/specs/06-mission-log.md), [spec 13](docs/specs/13-mission-log-gaps.md)). Backend only; no screen shows it. See [Mission log](#mission-log). |
 | Budget assistant | Rules in the app (daily limit, a warning below 20%). No model is called. |
 | Smart plan selection | Planned. Not implemented. |
 | Sales channels | Planned. Two Jujuy travel agencies were invited to a referral pilot on 2026-10-10 and have not answered. |

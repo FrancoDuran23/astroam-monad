@@ -123,6 +123,8 @@ test('a full trip records its events in order', async () => {
   assert.deepEqual(
     entries.map((entry) => entry.type),
     [
+      'mission.created',
+      'escrow.deposit',
       'esim.provisioned',
       'usage.baseline',
       'esim.funded',
@@ -136,11 +138,20 @@ test('a full trip records its events in order', async () => {
       'mission.closed',
     ],
   )
-  assert.ok(entries.every((entry) => entry.v === 1 && entry.missionId === trip.id && entry.iccid === activated.esim.iccid))
+  assert.ok(entries.every((entry) => entry.v === 1 && entry.missionId === trip.id))
+  // Before the eSIM exists the entries carry no ICCID; from it on, all of them do.
+  assert.deepEqual(entries.slice(0, 2).map((entry) => entry.iccid), [null, null])
+  assert.ok(entries.slice(2).every((entry) => entry.iccid === activated.esim.iccid))
   const times = entries.map((entry) => Date.parse(entry.at))
   assert.deepEqual(times, [...times].sort((a, b) => a - b))
 
   const byType = (type: MissionLogEntry['type']) => entries.filter((entry) => entry.type === type)
+  const mission = await service.getMission(trip.id)
+  assert.deepEqual(byType('mission.created')[0]!.data, { destinationId: 'br', budgetUsdc: 10, durationDays: 7 })
+  const deposit = byType('escrow.deposit')[0]!
+  assert.equal(deposit.data.txHash, mission.depositTxHash)
+  assert.equal(deposit.data.channelId, mission.channelId)
+  assert.equal(deposit.data.depositAtomic, '10000000')
   assert.equal(byType('voucher.received')[0]!.data.cumulativeAtomic, '6000000')
   assert.equal(byType('usage.reading')[0]!.data.meteredBytes, '2400000000')
   assert.equal(byType('escrow.claim')[0]!.data.txHash, claimTxHash)
@@ -180,10 +191,11 @@ test('a cancelled trip records the refund', async () => {
   await service.cancelMission(trip.id)
 
   const entries = await service.getMissionLog(trip.id)
-  assert.deepEqual(entries.map((entry) => entry.type), ['mission.closed'])
-  assert.equal(entries[0]!.data.closeKind, 'cancelled')
-  assert.equal(entries[0]!.data.refundedUsdc, 10)
-  assert.equal(entries[0]!.iccid, null)
+  assert.deepEqual(entries.map((entry) => entry.type), ['mission.created', 'escrow.deposit', 'mission.closed'])
+  const closed = entries[2]!
+  assert.equal(closed.data.closeKind, 'cancelled')
+  assert.equal(closed.data.refundedUsdc, 10)
+  assert.equal(closed.iccid, null)
 })
 
 test('no entry holds a signature, a key, the activation code or the API key', async () => {
@@ -236,6 +248,98 @@ test('a log that cannot be written never fails the trip, and is reported', async
   assert.ok(unwritten.every((line) => line.level === 'error' && line.detail === 'disk full'))
 })
 
+// --- spec 13: the purchase, top-ups and failures ------------------------
+
+const ofType = async (id: string, type: MissionLogEntry['type']) =>
+  (await service.getMissionLog(id)).filter((entry) => entry.type === type)
+
+test('a deposit confirmed twice is recorded once', async () => {
+  const trip = await paidTrip()
+  const mission = await service.getMission(trip.id)
+  await service.confirmPayment(trip.id, mission.paymentIntentId!, mission.depositTxHash!)
+
+  assert.equal((await ofType(trip.id, 'escrow.deposit')).length, 1)
+})
+
+test('a top-up records its payment and the funding it caused, once', async () => {
+  const trip = await paidTrip()
+  await service.activateMission(trip.id)
+  const intent = await service.createTopUpIntent(trip.id, 5)
+  await service.confirmTopUpPayment(trip.id, intent.intentId, '0xtopup_tx')
+  await service.confirmTopUpPayment(trip.id, intent.intentId, '0xtopup_tx')
+
+  const topups = await ofType(trip.id, 'escrow.topup')
+  assert.equal(topups.length, 1)
+  const mission = await service.getMission(trip.id)
+  assert.equal(topups[0]!.data.txHash, mission.topups[0]!.txHash)
+  assert.equal(topups[0]!.data.addedAtomic, '5000000')
+  assert.equal(topups[0]!.data.depositAtomic, '15000000')
+  const funded = (await ofType(trip.id, 'esim.funded')).filter((entry) => entry.data.source === 'topup')
+  assert.deepEqual(funded.map((entry) => entry.data.amountCents), [500])
+})
+
+test('a top-up that does not reach the eSIM wallet is recorded as a failed funding', async () => {
+  const trip = await paidTrip()
+  await service.activateMission(trip.id)
+  provider.topUp = async () => {
+    throw new Error('Citrus API 503 — unavailable')
+  }
+  const intent = await service.createTopUpIntent(trip.id, 5)
+  await service.confirmTopUpPayment(trip.id, intent.intentId, '0xtopup_tx')
+
+  const failed = await ofType(trip.id, 'esim.fund_failed')
+  assert.equal(failed.length, 1)
+  assert.equal(failed[0]!.data.source, 'topup')
+  assert.equal(failed[0]!.data.amountCents, 500)
+  assert.equal(failed[0]!.data.detail, 'Citrus API 503 — unavailable')
+})
+
+test('an activation the reseller balance cannot cover is recorded as a failed provisioning', async () => {
+  const trip = await paidTrip()
+  provider.setResellerBalanceUsd(0)
+
+  await assert.rejects(() => service.activateMission(trip.id))
+
+  const entries = await service.getMissionLog(trip.id)
+  assert.deepEqual(entries.map((entry) => entry.type), ['mission.created', 'escrow.deposit', 'esim.provision_failed'])
+  assert.equal(entries[2]!.data.code, 'RESELLER_INSUFFICIENT_FUNDS')
+  assert.equal(entries[2]!.iccid, null)
+})
+
+test('a tranche that keeps failing is recorded once, and a tranche found in the wallet later as recovered', async () => {
+  const trip = await paidTrip()
+  const activated = await service.activateMission(trip.id)
+  const topUp = provider.topUp.bind(provider)
+  // The provider is down: the voucher calls for a second tranche, as in the full
+  // trip, and the next pass retries it. One entry, not one per attempt.
+  provider.topUp = async () => {
+    throw new Error('Citrus API 503 — unavailable')
+  }
+  await service.processDemoTraffic(trip.id, 400 * MB)
+  const signature = await rail.signVoucher(trip.escrowId, 6_000_000n)
+  await service.submitVoucher(trip.id, { cumulativeAtomic: '6000000', signature })
+  // $2 spent: less than what was funded, so the lost tranche is not mistaken for spent money.
+  provider.setChargedUsd(activated.esim.iccid, 2_000_000n)
+  assert.equal((await service.advance(trip.id, clock)).error, 'Citrus API 503 — unavailable')
+  assert.equal((await ofType(trip.id, 'esim.fund_failed')).length, 1)
+
+  // Then it takes the money but the answer is lost: a new failure, and the next pass finds the money.
+  provider.topUp = async (iccid, cents) => {
+    await topUp(iccid, cents)
+    throw new Error('socket hang up')
+  }
+  await service.advance(trip.id, clock)
+  provider.topUp = topUp
+  await service.advance(trip.id, clock)
+
+  const failed = await ofType(trip.id, 'esim.fund_failed')
+  assert.deepEqual(failed.map((entry) => entry.data.detail), ['Citrus API 503 — unavailable', 'socket hang up'])
+  assert.ok(failed.every((entry) => entry.data.source === 'tranche' && entry.data.code === null))
+  const recovered = (await ofType(trip.id, 'esim.funded')).filter((entry) => entry.data.source === 'recovered')
+  assert.equal(recovered.length, 1)
+  assert.equal(recovered[0]!.data.amountCents, failed[1]!.data.amountCents)
+})
+
 test('the log of an unknown trip is an error', async () => {
   await assert.rejects(() => service.getMissionLog('mis_unknown'), /not found/)
 })
@@ -271,9 +375,9 @@ test('GET /api/missions/:id/logs returns the entries, oldest first', async () =>
   assert.equal(res.status, 200)
   const body = (await res.json()) as { missionId: string; entries: MissionLogEntry[] }
   assert.equal(body.missionId, trip.id)
-  assert.equal(body.entries[0]!.type, 'esim.provisioned')
+  assert.equal(body.entries[0]!.type, 'mission.created')
   assert.equal(body.entries.at(-1)!.type, 'mission.closed')
-  assert.equal(body.entries.length, 11)
+  assert.equal(body.entries.length, 13)
 })
 
 test('GET /api/missions/:id/logs is 404 for an unknown trip', async () => {

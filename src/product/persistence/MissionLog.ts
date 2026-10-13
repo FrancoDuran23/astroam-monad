@@ -11,8 +11,13 @@ import path from 'node:path'
  * an API key or the eSIM's activation code.
  */
 export type MissionLogType =
+  | 'mission.created'
+  | 'escrow.deposit'
+  | 'escrow.topup'
   | 'esim.provisioned'
+  | 'esim.provision_failed'
   | 'esim.funded'
+  | 'esim.fund_failed'
   | 'esim.paused'
   | 'esim.resumed'
   | 'usage.baseline'
