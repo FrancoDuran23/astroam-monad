@@ -54,6 +54,41 @@ Los vales se guardan por dirección de contrato
 (`DATA_DIR/monad-vouchers-<escrow>.json`), así que no se migran: los de la v1
 quedan en su archivo y sirven solo para cerrar escrows de la v1.
 
+## v4 (pending deploy)
+
+| Version | Address | Date | Deploy tx | Payee | Operator |
+|---|---|---|---|---|---|
+| v4 | pending | pending | pending | pending | pending |
+
+The address, the transaction and the date are filled in by whoever runs
+`npm run monad:deploy`, from what the script prints. Until then the v3 row
+above is the current deployment.
+
+What changed from v3, and why:
+
+- **The server key is no longer the payee.** In v3 one account was both the
+  payee and the only caller of `claim` and `close`, so a stolen server key was
+  stolen funds, and a job swept the payee to a treasury afterwards. In v4 the
+  constructor is `(usdc, payee, operator, timeoutSeconds)`: the server key is
+  the `operator`, it only sends transactions, and the contract pays the payee
+  directly. The payee can be a cold wallet or a multisig.
+- **`claim` and `close` accept the operator or the payee** and always pay the
+  payee. Anyone else reverts with `NotOperator`.
+- **`setOperator(address)`**, callable only by the payee, rotates the server
+  key without redeploying. It emits `OperatorChanged`.
+- **Bound on a compromised operator:** it can close a channel early with what
+  was already claimed, refunding the traveler. It cannot move funds anywhere
+  except to the payee and the traveler.
+- Vouchers, `deposit`, `topUp` and `refund` do not change. The EIP-712 domain
+  is the same, but its `verifyingContract` is the new address, so a v3 voucher
+  is not valid on v4. Open v3 escrows are closed or refunded as in the v1
+  section above.
+
+The deploy script refuses a payee equal to the operator (unless
+`--allow-same-key`, for local testing), reads `usdc()`, `payee()`, `operator()`
+and `timeoutSeconds()` back after deploying and fails on any mismatch. Run
+`npm run real:check` afterwards.
+
 ## Cómo redesplegar
 
 1. Compilar en WSL: `forge build --root contracts` (genera `contracts/out/`).

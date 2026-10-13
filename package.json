@@ -15,6 +15,7 @@
     "contracts:test": "forge test --root contracts",
     "contracts:abi": "node scripts/generate-abi.ts",
     "monad:deploy": "node scripts/deploy-monad-escrow.ts",
+    "real:check": "node scripts/check-real-run.ts",
     "monad:close-escrow": "node scripts/close-escrow.ts"
   },
   "dependencies": {
