@@ -3,12 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import shipSrc from '../assets/ship-night.png'
 import MobileAppShell from '../components/MobileAppShell'
 import ActivityFeed from '../components/dashboard/ActivityFeed'
+import TimeoutRefund from '../components/dashboard/TimeoutRefund'
 import TopUpModal from '../components/dashboard/TopUpModal'
 import { useMission } from '../hooks/useMission'
 import { paymentMode, showDemoTraffic } from '../utils/paymentMode'
 import { DEMO_TRAFFIC_MB, estimateMb, fmtDate, fmtMb, fmtUsdc, shortTx } from '../utils/missionUtils'
 import type { FinishResult } from '../types/mission'
-import { hasSessionKey, shouldWarnMissingSessionKey, MISSING_SESSION_KEY_WARNING } from '../chain/monad'
+import { hasSessionKey, loadRefundTarget, shouldWarnMissingSessionKey, MISSING_SESSION_KEY_WARNING } from '../chain/monad'
 
 const CARD = 'bg-cardbg glass border border-cardborder'
 
@@ -27,6 +28,7 @@ export default function ActiveMissionPage() {
     simulate,
     togglePause,
     finish,
+    withdrawAfterTimeout,
     reset,
   } = useMission()
 
@@ -36,6 +38,8 @@ export default function ActiveMissionPage() {
   const [flash, setFlash] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showTechDetails, setShowTechDetails] = useState(false)
+  // Set when the traveler withdrew after the timeout and the server could not be told.
+  const [withdrawNote, setWithdrawNote] = useState<string | null>(null)
 
   // Redirect if there is no mission (once it has finished loading from the backend)
   useEffect(() => {
@@ -104,6 +108,27 @@ export default function ActiveMissionPage() {
           ? 'OUT OF BALANCE'
           : 'DATA PAUSED'
         : 'LINK ACTIVE'
+
+  // The withdrawal after the timeout: only for a trip paid on chain and still open.
+  const refundTarget =
+    paymentMode(isDemoMode, caps) === 'on-chain' &&
+    mission.paymentStatus === 'paid' &&
+    !isCompleted &&
+    !isClosing &&
+    mission.status !== 'cancelled'
+      ? loadRefundTarget(mission.id)
+      : null
+
+  function handleWithdrawn(result: FinishResult, backendNotified: boolean) {
+    setError(null)
+    setWithdrawNote(
+      backendNotified
+        ? null
+        : 'AstroAm’s server could not be reached, so this trip may still look open here. Your refund is on the chain and does not depend on it.',
+    )
+    setFinishResult(result)
+    setShowCompleteConfirm(true)
+  }
 
   const providerLabel = isDemoMode || mission.isMock !== false ? 'Citrus Mobile (simulated)' : 'Citrus Mobile'
   const iccidDisplay = mission.iccid || mission.esim?.iccid || '—'
@@ -206,6 +231,7 @@ export default function ActiveMissionPage() {
                       : 'Done. The unused part of your deposit was released to your wallet.'
                     : 'The refund is being processed in the background.'}
                 </p>
+                {withdrawNote && <p className="font-sans text-xs text-textsecondary">{withdrawNote}</p>}
                 <button
                   type="button"
                   onClick={() => setShowCompleteConfirm(false)}
@@ -443,7 +469,15 @@ export default function ActiveMissionPage() {
         )}
       </div>
 
-      {/* 8. End mission */}
+      {/* 8. Withdraw after the contract's timeout */}
+      <TimeoutRefund
+        target={refundTarget}
+        refundedUsdc={mission.refundedUsdc}
+        withdraw={withdrawAfterTimeout}
+        onWithdrawn={handleWithdrawn}
+      />
+
+      {/* 9. End mission */}
       {!isCompleted && !isClosing && (
         <div className="pt-2 pb-6 flex justify-center">
           <button
@@ -452,6 +486,7 @@ export default function ActiveMissionPage() {
             onClick={() => {
               setError(null)
               setFinishResult(null)
+              setWithdrawNote(null)
               setShowCompleteConfirm(true)
             }}
             className="w-full sm:w-auto px-8 py-3.5 rounded-full border border-alerta/40 bg-alerta/5 text-alerta font-sans font-bold text-xs uppercase tracking-wider hover:bg-alerta/15 transition-all flex items-center justify-center gap-2 min-h-[48px]"

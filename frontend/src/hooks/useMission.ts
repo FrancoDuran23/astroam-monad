@@ -301,6 +301,39 @@ export function useMission() {
     }
   }
 
+  /**
+   * The traveler takes the unspent balance back from the contract after its
+   * timeout. The refund is on the chain before the backend hears about it, so a
+   * backend that cannot be reached never turns it into an error.
+   */
+  const withdrawAfterTimeout = async (
+    hooks?: Parameters<typeof import('../chain/monad').refundEscrow>[1],
+  ): Promise<{ result: FinishResult; backendNotified: boolean }> => {
+    if (!mission || isDemoMode) throw new Error('No on-chain trip to withdraw from')
+    const { loadRefundTarget, refundEscrow } = await import('../chain/monad')
+    const target = loadRefundTarget(mission.id)
+    if (!target) throw new Error('This browser does not hold the escrow details for this trip.')
+    const outcome = await refundEscrow(target, hooks)
+    const result: FinishResult = {
+      status: 'completed',
+      txHash: outcome.txHash,
+      explorerUrl: outcome.explorerUrl,
+      closeKind: 'timeout_refund',
+      settledUsdc: mission.consumedUsdc,
+      refundedUsdc: outcome.refundedUsdc,
+      wallet: { address: outcome.traveler, beforeUsdc: outcome.beforeUsdc, afterUsdc: outcome.afterUsdc },
+    }
+    try {
+      // A trip that never started is cancelled; one that ran is finished.
+      if (mission.status === 'paid') await apiMissionService.cancelMission(mission.id)
+      else await apiMissionService.finishMission(mission.id)
+      setMission(await apiMissionService.getMission(mission.id))
+      return { result, backendNotified: true }
+    } catch {
+      return { result, backendNotified: false }
+    }
+  }
+
   const travelerSigns = !isDemoMode && caps?.voucherSigning === 'traveler'
 
   useEffect(() => {
@@ -392,6 +425,7 @@ export function useMission() {
     togglePause,
     finish,
     cancel,
+    withdrawAfterTimeout,
     simulate,
     reset,
   }
