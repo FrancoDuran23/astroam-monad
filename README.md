@@ -347,6 +347,7 @@ Every trip keeps an append-only history of its eSIM, its usage and its money, so
 - **Failures:** a log write that fails is reported through the logger and never fails the operation it describes.
 - **Evidence:** `npm run log:dump -- <missionId> --out docs/evidence/<date>-<name>.txt` writes one trip's log as the evidence text: readable lines plus the raw JSON lines, with the ICCID's middle digits hidden. It is the same format as astroam-solana's `docs/evidence` file.
 - **Never recorded:** a private key, a voucher signature, an API key or the eSIM's activation code. Money and byte counts are written as digit strings, with transaction hashes where there is one.
+- **Watching it live:** see [Watching a purchase live](#watching-a-purchase-live) below.
 
 | Event | Recorded when |
 |---|---|
@@ -365,6 +366,36 @@ Every trip keeps an append-only history of its eSIM, its usage and its money, so
 | `mission.closed` | the escrow is closed or the mission cancelled |
 
 There is no `escrow.checkpoint` and no backend-signed voucher event: on Monad the traveler's session key signs. There is no frontend view of the log.
+
+#### Watching a purchase live
+
+There is no screen for the log: follow it from a terminal while you buy an eSIM in the app.
+
+1. Start the API (`npm run dev`) and the frontend. With the default `DATA_DIR=./data`, the log is `data/mission-log.jsonl` at the repository root. The file appears with the first entry of the first trip.
+2. In a second terminal, follow the file. New lines show up as they are written:
+
+   ```powershell
+   Get-Content data\mission-log.jsonl -Wait -Tail 0    # PowerShell
+   ```
+
+   ```bash
+   tail -n 0 -f data/mission-log.jsonl                 # bash
+   ```
+
+3. Buy an eSIM in the app. The entries arrive in this order:
+
+   | Step in the app | Entries |
+   |---|---|
+   | The trip is created in the wizard | `mission.created` |
+   | The wallet deposit is confirmed on Monad (the purchase) | `escrow.deposit`, with the transaction hash |
+   | The wizard activates the trip after the deposit | `esim.provisioned`, `usage.baseline`, `esim.funded` (first tranche) |
+   | The activation fails | `esim.provision_failed`, with the error code |
+   | Data is used (a real eSIM, or demo traffic) | `usage.reading` or `usage.demo_traffic`, `voucher.received`, more `esim.funded` |
+   | The trip ends | `escrow.claim` when one is due, then `mission.closed` |
+
+4. One trip only: the app keeps its mission id in the browser's local storage under `astroam_mission_id` (DevTools → Application → Local Storage). Open `http://localhost:8080/api/missions/<missionId>/logs` for that trip's entries, or run `npm run log:dump -- <missionId>` for the readable version.
+
+The terminal running `npm run dev` also prints the API's own JSON lines on stdout (`esim tranche funded`, `escrow claim`, `escrow close`, errors). Those are operational messages, not the mission log. On a hosted API (Render) there is no shell on the data file: read one trip with `GET <api-url>/api/missions/<missionId>/logs`, and the stdout lines in the service's **Logs** tab.
 
 ## Go-to-market and validation
 
