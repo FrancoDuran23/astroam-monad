@@ -14,7 +14,7 @@ place before spending testnet funds or a real eSIM.
 - `scripts/deploy-monad-escrow.ts`
 - `scripts/check-real-run.ts` (new) and `real:check` in `package.json`
 - `.gitignore`, `.env.example`
-- `docs/despliegues-monad.md` (the record of deployments)
+- `docs/monad-deployments.md` (the record of deployments)
 
 Reference: astroam-solana's `scripts/deploy-solana-escrow.ts` and
 `scripts/check-real-run.ts`.
@@ -67,7 +67,7 @@ line per check with pass or fail, and exits non-zero if any fails.
     `.env.example`, `contracts/broadcast/`.
 13. `.env.example` documents `MONAD_OPERATOR_ADDRESS`, `MONAD_PAYEE_ADDRESS`
     and says which values the deploy prints.
-14. `docs/despliegues-monad.md`: add a v4 entry describing what changed from
+14. `docs/monad-deployments.md`: add a v4 entry describing what changed from
     v3 and why, with the address and transaction marked as pending until the
     deploy is done. Keep v1 to v3 as they are.
 

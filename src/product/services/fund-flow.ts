@@ -1,4 +1,4 @@
-// Rules of the automatic fund flow for Monad (docs/issues-flujo-de-fondos.md B1).
+// Rules of the automatic fund flow for Monad (docs/decisions/automate-fund-flow-issues.md B1).
 //
 // AstroAm advances USD to the eSIM and collects USDC from the escrow. Two
 // rules keep what it can lose at one tranche:

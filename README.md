@@ -53,7 +53,7 @@ What exists today:
 Until the hosted demo exists, the flow can be seen in three ways:
 
 1. **No wallet, five minutes:** the app in demo mode ([Try it in 5 minutes](#try-it-in-5-minutes)). Every payment there is simulated and labelled so.
-2. **The one run on Monad testnet:** open the v3 deposit and close transactions under [The deployed contract](#the-deployed-contract): 5 USDC in, 0.625 USDC to the payee, 4.375 USDC back to the traveler, in the [full report](docs/reporte-prueba-e2e-monad.md) (Spanish).
+2. **The one run on Monad testnet:** open the v3 deposit and close transactions under [The deployed contract](#the-deployed-contract): 5 USDC in, 0.625 USDC to the payee, 4.375 USDC back to the traveler, in the [full report](docs/monad-e2e-test-report.md).
 3. **With a wallet, on your own deploy** of escrow v4 ([Test with your own deploy](#test-with-your-own-deploy)):
    1. Open the app with MetaMask (or another EVM wallet) on Monad testnet.
    2. Pick a destination (for example Brazil), travel dates and a budget (for example 5 USDC).
@@ -67,7 +67,7 @@ Until the hosted demo exists, the flow can be seen in three ways:
 
 Watch on YouTube: [youtu.be/tX7weju0MBc](https://youtu.be/tX7weju0MBc). The file is also in the Solana repository: [`AstroAm-demo-EN.mp4`](https://github.com/FrancoDuran23/astroam-solana/blob/main/docs/demo/AstroAm-demo-EN.mp4) (1:58, English subtitles burned in).
 
-**This video was recorded on the Solana build. A Monad recording will replace it.** The script for the Monad recording is [docs/guion-video-demo.md](docs/guion-video-demo.md) (Spanish).
+**This video was recorded on the Solana build. A Monad recording will replace it.** The script for the Monad recording is [docs/demo-video-script.md](docs/demo-video-script.md).
 
 ## Video pitch
 
@@ -123,7 +123,7 @@ Network: **Monad testnet**, chain id `10143`. Circle USDC (6 decimals): `0x534b2
 | Payee (also the account that sent `close`) | `0xE3E38BE1522E2086B135cb9e9b3D223708485316` |
 | Refund timeout | 2,592,000 s (30 days) |
 
-The 2026-10-07 run on v3, one trip to Brazil with demo traffic and a sample eSIM ([report](docs/reporte-prueba-e2e-monad.md), in Spanish):
+The 2026-10-07 run on v3, one trip to Brazil with demo traffic and a sample eSIM ([report](docs/monad-e2e-test-report.md)):
 
 | Step | Transaction |
 |---|---|
@@ -143,7 +143,7 @@ That run had the traveler's wallet sign the approval and the deposit, and the pa
 | `refund(escrowId)` | anyone, after the timeout | Returns `deposit - claimed` to the traveler, once the timeout has passed since the last deposit, top-up or claim |
 | `setOperator(address)` | payee | Replaces the operator without redeploying |
 
-What changed from v3 and why is in [docs/despliegues-monad.md](docs/despliegues-monad.md), which is also the record of every deployed version (v1 to v3). Vouchers are signed against the contract address, so a v3 voucher is not valid on v4.
+What changed from v3 and why is in [docs/monad-deployments.md](docs/monad-deployments.md), which is also the record of every deployed version (v1 to v3). Vouchers are signed against the contract address, so a v3 voucher is not valid on v4.
 
 ### Real eSIM
 
@@ -263,7 +263,7 @@ flowchart LR
 ### What is still trusted
 
 - **AstroAm's usage metering, and the provider's figures.** The contract cannot know the usage. It enforces only that nobody is paid above the highest voucher. An honest backend claims `min(used, voucher)`; a dishonest operator could claim the whole voucher. What the traveler controls is how far ahead of usage the app signs, and that margin is all that is ever exposed.
-- **Citrus reports usage in USD charged, not in bytes**, so megabytes are derived from the country rate ([why usage is metered by the provider](docs/decisiones/medicion-con-proveedor.md), Spanish).
+- **Citrus reports usage in USD charged, not in bytes**, so megabytes are derived from the country rate ([why usage is metered by the provider](docs/decisions/metering-with-provider.md)).
 - **The server holds the latest voucher until it is claimed.** With no database, a restart on a host without a disk loses it. Unclaimed usage is then lost to AstroAm, and the traveler gets the rest back.
 - **No audit** of the contract or the backend.
 
@@ -335,7 +335,7 @@ There is no treasury step: the contract pays the payee, and the server key never
 
 Three properties of the close step. "The deposit is spent" is judged on the usage, the figure a claim and a close settle, not on the voucher: the app signs a voucher up to the budget ahead of usage, and that alone does not close the trip. The escrow's timeout is read from the contract through the rail, never assumed; if it cannot be read, the backend logs an error and skips the timeout-based close for that pass (it also skips it when `ESCROW_CLOSE_MARGIN_SECONDS` is not smaller than the timeout). The eSIM wallet is returned to the reseller only after the escrow close has landed, and finishing a trip twice, or after a crash between the on-chain close and saving the mission, ends in the same completed state ([spec 12](docs/specs/12-close-path-fixes.md)).
 
-Fund-flow details, the tranche rule and the decisions on the offramp, scope and yield: [docs/arquitectura-flujo-de-fondos.md](docs/arquitectura-flujo-de-fondos.md) (Spanish, with an English update for v4). The tracker of what was built, per milestone: [docs/issues-flujo-de-fondos.md](docs/issues-flujo-de-fondos.md).
+Fund-flow details, the tranche rule and the decisions on the offramp, scope and yield: [docs/decisions/fund-flow-architecture.md](docs/decisions/fund-flow-architecture.md). The tracker of what was built, per milestone: [docs/decisions/automate-fund-flow-issues.md](docs/decisions/automate-fund-flow-issues.md).
 
 ### Mission log
 
@@ -450,10 +450,10 @@ Everything below is still to do. "The team" means the people in [Team & roles](#
 1. **Deploy escrow v4 on Monad testnet and record a full run** (approve, deposit, claim, close), then replace the pending notes above with the address and the transactions. Steps: [Test with your own deploy](#test-with-your-own-deploy).
 2. **Host the demo** on Render and Vercel ([docs/deploy.md](docs/deploy.md)) and add the URLs above.
 3. **A run with a real eSIM that settles on Monad, and 10 sessions with travelers on a real trip.** [docs/real-esim.md](docs/real-esim.md) has the steps. The app sends no access token, so the run keeps `ASTROAM_LIVE_ENABLED=false`; one limit of the code remains (one eSIM per user reference, see Known limits).
-4. **Record the Monad demo video and pitch** ([script](docs/guion-video-demo.md)) and replace the Solana ones.
+4. **Record the Monad demo video and pitch** ([script](docs/demo-video-script.md)) and replace the Solana ones.
 5. **Payee as a multisig**, chosen when v4 is deployed. See [The plan, not done](#the-plan-not-done).
 6. Legal review of the draft terms (the app footer links to `/terms`).
-7. An offramp for the collected USDC. Today it is a manual step ([D-1](docs/arquitectura-flujo-de-fondos.md)).
+7. An offramp for the collected USDC. Today it is a manual step ([D-1](docs/decisions/fund-flow-architecture.md)).
 8. **Direct wholesale supply, as volume grows.** Planned; no extra supplier is signed. The model already scales: `CONNECTIVITY_PROVIDER` is pluggable, any wholesale eSIM API can sit behind it, and the escrow, the metering and the refund do not depend on which supplier that is.
 
 ## Checks and test verification
@@ -482,15 +482,15 @@ The details, what the suites cover and what they do not show are in [docs/test-v
 | Read | For |
 |---|---|
 | [`docs/deploy.md`](docs/deploy.md) | Hosting the API on Render and the app on Vercel, and the limit of the free plan. |
-| [`docs/despliegues-monad.md`](docs/despliegues-monad.md) | Record of deployed contract versions (v1 to v3) and the v4 entry, which is pending (Spanish and English). |
-| [`docs/reporte-prueba-e2e-monad.md`](docs/reporte-prueba-e2e-monad.md) | The 2026-10-07 testnet run on v3 (Spanish, with an English note). |
-| [`docs/arquitectura-flujo-de-fondos.md`](docs/arquitectura-flujo-de-fondos.md) | Fund-flow architecture, Citrus tranches, decisions D-1 to D-3 (Spanish, with an English update for v4). |
-| [`docs/issues-flujo-de-fondos.md`](docs/issues-flujo-de-fondos.md) | Tracker of the fund-flow milestones (Spanish, with an English update). |
+| [`docs/monad-deployments.md`](docs/monad-deployments.md) | Record of deployed contract versions (v1 to v3) and the v4 entry, which is pending. |
+| [`docs/monad-e2e-test-report.md`](docs/monad-e2e-test-report.md) | The 2026-10-07 testnet run on v3. |
+| [`docs/decisions/fund-flow-architecture.md`](docs/decisions/fund-flow-architecture.md) | Fund-flow architecture, Citrus tranches, decisions D-1 to D-3. |
+| [`docs/decisions/automate-fund-flow-issues.md`](docs/decisions/automate-fund-flow-issues.md) | Tracker of the fund-flow milestones. |
 | [`docs/specs/`](docs/specs/README.md) | One spec per change made on this branch, and why. |
 | [`docs/real-esim.md`](docs/real-esim.md) | What it takes to run with a real eSIM, and what is simulated today. |
 | [`docs/validation.md`](docs/validation.md), [`docs/go-to-market.md`](docs/go-to-market.md) | Traveler interviews and the market and pricing plan. |
-| [`docs/pruebas-mobile-metamask.md`](docs/pruebas-mobile-metamask.md) | Testing with MetaMask Mobile and the local network (Spanish). |
-| [`docs/decisiones/medicion-con-proveedor.md`](docs/decisiones/medicion-con-proveedor.md) | Why usage is metered by the carrier, not by our own gateway (Spanish). |
-| [`docs/citrus-mobile-brief.md`](docs/citrus-mobile-brief.md), [`docs/citrus-mobile-spec.md`](docs/citrus-mobile-spec.md) | The Citrus Mobile integration (Spanish). |
+| [`docs/mobile-metamask-testing.md`](docs/mobile-metamask-testing.md) | Testing with MetaMask Mobile and the local network. |
+| [`docs/decisions/metering-with-provider.md`](docs/decisions/metering-with-provider.md) | Why usage is metered by the carrier, not by our own gateway. |
+| [`docs/citrus-mobile-brief.md`](docs/citrus-mobile-brief.md), [`docs/citrus-mobile-spec.md`](docs/citrus-mobile-spec.md) | The Citrus Mobile integration. |
 
 Terms (draft): the app footer links to `/terms`.

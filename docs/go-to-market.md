@@ -70,12 +70,12 @@ A short first trip loses money at this price. The options are a one-time activat
 ### Other costs
 
 - **Chain fees.** Not measured on Monad in this repository yet. A session is a deposit, a few claims and a close, each paid in MON by the traveler (deposit) or the operator key (claim, close). The Solana figure from the sibling repository is not carried over.
-- **USDC to dollars.** Not solved. No offramp account exists. The plan for the pilot is manual conversion by the operator ([D-1 in the fund-flow architecture](arquitectura-flujo-de-fondos.md)).
+- **USDC to dollars.** Not solved. No offramp account exists. The plan for the pilot is manual conversion by the operator ([D-1 in the fund-flow architecture](decisions/fund-flow-architecture.md)).
 - **Unused data.** Nothing is lost: what the eSIM did not use returns to the reseller balance when the trip closes.
 
 ### What we do not know
 
-- What share of a deposit ends up refunded. The 2026-10-07 testnet run on escrow v3 refunded 87.5% (4.375 of 5 USDC, [report](reporte-prueba-e2e-monad.md)); that is a test, not a traveler.
+- What share of a deposit ends up refunded. The 2026-10-07 testnet run on escrow v3 refunded 87.5% (4.375 of 5 USDC, [report](monad-e2e-test-report.md)); that is a test, not a traveler.
 - What it costs to acquire a traveler.
 - How many Argentine travelers hold USDC on a chain they can use with an EVM wallet.
 

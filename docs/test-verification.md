@@ -45,7 +45,7 @@ Total: 470 tests, all passing.
 
 ## 3. What these runs do not show
 
-- No test was run against a deployed contract: escrow v4 is not deployed, and no run of the finished code on testnet has been recorded. The only testnet run is the 2026-10-07 one on v3 ([report](reporte-prueba-e2e-monad.md)).
+- No test was run against a deployed contract: escrow v4 is not deployed, and no run of the finished code on testnet has been recorded. The only testnet run is the 2026-10-07 one on v3 ([report](monad-e2e-test-report.md)).
 - The wallet flows in the frontend (deposit, top-up, refund after the timeout) were verified by unit tests of their logic. They were not recorded in a browser against v4.
 - The Docker image has never been built: no Docker access was available where this was written. The same server was started directly with Node.
 - There is no hosted deployment, so there is no live check of a hosted API or app.

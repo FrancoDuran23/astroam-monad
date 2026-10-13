@@ -30,7 +30,7 @@ Escrow v4 is not deployed yet, so this changes v4 itself; there is no v5.
 - `src/rails/*`, the claim path in
   `src/product/services/MissionProductService.ts` and
   `src/product/services/fund-flow.ts`, their tests
-- `docs/despliegues-monad.md` (the v4 entry), `docs/specs/01-escrow-v4-operator.md`
+- `docs/monad-deployments.md` (the v4 entry), `docs/specs/01-escrow-v4-operator.md`
   is left as written
 
 ## Requirements

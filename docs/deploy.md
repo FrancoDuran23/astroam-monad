@@ -4,7 +4,7 @@ Two processes: the API (this repo root, as a Docker image on Render) and the tra
 
 Before you start you need:
 
-- The deployed `AstroAmEscrow` address on Monad testnet (`MONAD_ESCROW_ADDRESS`). `npm run monad:deploy` prints it; the record of deployments is in `docs/despliegues-monad.md`.
+- The deployed `AstroAmEscrow` address on Monad testnet (`MONAD_ESCROW_ADDRESS`). `npm run monad:deploy` prints it; the record of deployments is in `docs/monad-deployments.md`.
 - The private key of the account the escrow trusts to close and collect (the operator). It needs testnet MON for gas ([faucet.monad.xyz](https://faucet.monad.xyz)). Whoever holds it sets it on the host as `MONAD_OPERATOR_PRIVATE_KEY`; the process never logs it. Without it the API does not start: with `PAYMENT_RAIL=monad` it logs which variable is missing and exits. With a key that is neither the contract's `operator()` nor its `payee()` the API starts, but `GET /ready` answers 503 with `operator_not_authorized`: a MetaMask deposit would still land in the escrow, the API could not close the trip or collect, and the traveler would recover the deposit only through the contract's refund after the timeout. The operator never receives USDC: the contract pays the payee.
 
 The eSIM provider stays on `CONNECTIVITY_PROVIDER=fake`. Do not set `citrus` and do not put a Citrus API key on a public demo. Leave `CITRUS_API_KEY` and `CITRUS_WEBHOOK_SECRET` empty.

@@ -12,11 +12,11 @@ Only what astroam-solana records, and about the Solana build: the flow issued a 
 
 | Piece | Today | What makes it real |
 |---|---|---|
-| eSIM profile | `FakeProvider` returns a sample profile. No line is issued. The 2026-10-07 testnet run ([report](reporte-prueba-e2e-monad.md)) shows an LPA string with `fake.smdp`: a sample. | `CONNECTIVITY_PROVIDER=citrus` and `CITRUS_API_KEY`, plus the variables below. |
+| eSIM profile | `FakeProvider` returns a sample profile. No line is issued. The 2026-10-07 testnet run ([report](monad-e2e-test-report.md)) shows an LPA string with `fake.smdp`: a sample. | `CONNECTIVITY_PROVIDER=citrus` and `CITRUS_API_KEY`, plus the variables below. |
 | Usage | The demo-traffic button injects traffic (`ENABLE_DEMO_TRAFFIC=true`, the default). | `ENABLE_DEMO_TRAFFIC=false`. Usage is then what Citrus reports for that eSIM. |
 | Prices in the app | A fixed table of sample rates per country. | Read `GET /rates` from Citrus. Not built. |
 | USDC | Circle's testnet USDC. It has no value. | Mainnet. Out of scope for the hackathon. |
-| Collected USDC to dollars | Nothing moves. The escrow pays the payee address. | A manual conversion by the operator, or an offramp account. See D-1 in [the fund-flow architecture](arquitectura-flujo-de-fondos.md). |
+| Collected USDC to dollars | Nothing moves. The escrow pays the payee address. | A manual conversion by the operator, or an offramp account. See D-1 in [the fund-flow architecture](decisions/fund-flow-architecture.md). |
 
 Two pieces are real but could be mistaken for simulated: the rules in the app that warn about the budget call no model, and with `PAYMENT_RAIL=monad` the USDC moves through the `AstroAmEscrow` contract, not through any in-memory rail. With `PAYMENT_RAIL=fake` nothing moves on chain, and outside demo mode the app then shows "payments are not available".
 

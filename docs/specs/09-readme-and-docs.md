@@ -15,8 +15,8 @@ Solana replaced by Monad.
 - `README.md`
 - `docs/validation.md`, `docs/go-to-market.md`, `docs/test-verification.md`,
   `docs/real-esim.md` (new, adapted from astroam-solana)
-- `docs/arquitectura-flujo-de-fondos.md`, `docs/issues-flujo-de-fondos.md`,
-  `docs/reporte-prueba-e2e-monad.md`
+- `docs/decisions/fund-flow-architecture.md`, `docs/decisions/automate-fund-flow-issues.md`,
+  `docs/monad-e2e-test-report.md`
 - `docs/img/` for images the copied sections reference
 - Delete `docs/estado-del-proyecto.md` and
   `docs/registro-sesion-2026-10-03.md`: both are out of date
@@ -47,7 +47,7 @@ fact, or with a visible pending note when the Monad fact does not exist yet.
    - Deployed contract: the v4 address and the table of transactions for a
      full run (approve, deposit, claim, close) to be added after the v4
      testnet deploy and run. Until then show v3's address and the
-     2026-10-07 run from `docs/reporte-prueba-e2e-monad.md`, labelled as the
+     2026-10-07 run from `docs/monad-e2e-test-report.md`, labelled as the
      previous version.
    - Real eSIM: the run with a real eSIM on 2026-10-09 was done with the
      Solana build of the same backend; link to that evidence in
