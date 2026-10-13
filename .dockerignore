@@ -1,0 +1,14 @@
+.git
+.claude
+node_modules
+frontend
+contracts
+design-reference
+docs
+scripts
+data
+.env
+.env.*
+!.env.example
+*.log
+*.tsbuildinfo

@@ -13,6 +13,7 @@ import type { CitrusWebhooksRouteOptions } from "./routes/citrus-webhooks.ts";
 
 const env = process.env;
 const port = Number(env.PORT) > 0 ? Number(env.PORT) : 8080;
+const host = env.HOST?.trim() || undefined;
 const dataDir = env.DATA_DIR || "./data";
 const log = (line: Record<string, unknown>) => process.stdout.write(`${JSON.stringify(line)}\n`);
 
@@ -72,6 +73,8 @@ if (env.FUND_FLOW_ENABLED !== "false") {
   log({ level: "info", msg: "fund-flow loop started", treasury: treasuryAddress ?? "none" });
 }
 
-app.listen(port, () => {
-  log({ level: "info", msg: `astroam server listening on :${port}`, network });
-});
+const onListening = () => {
+  log({ level: "info", msg: `astroam server listening on ${host ?? ""}:${port}`, network });
+};
+if (host !== undefined) app.listen(port, host, onListening);
+else app.listen(port, onListening);
