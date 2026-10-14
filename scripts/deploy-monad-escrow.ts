@@ -81,11 +81,18 @@ function oneLine(error: unknown): string {
 
 function forgeBuild(): Promise<void> {
   const forge = foundryBin("forge");
-  if (!forge) return Promise.reject(new Error("forge is not installed: curl -L https://foundry.paradigm.xyz | bash && foundryup"));
+  if (forge) {
+    return new Promise((resolve, reject) => {
+      const child = spawn(forge, ["build", "--root", "contracts"], { stdio: "inherit" });
+      child.on("error", (error) => reject(error));
+      child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`forge build failed (exit ${code}): fix the contract errors above`))));
+    });
+  }
+  if (existsSync(ARTIFACT)) return Promise.resolve();
   return new Promise((resolve, reject) => {
-    const child = spawn(forge, ["build", "--root", "contracts"], { stdio: "inherit" });
+    const child = spawn("wsl", ["bash", "-c", "~/.foundry/bin/forge build --root contracts"], { stdio: "inherit" });
     child.on("error", (error) => reject(error));
-    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`forge build failed (exit ${code}): fix the contract errors above`))));
+    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`wsl forge build failed (exit ${code})`))));
   });
 }
 
