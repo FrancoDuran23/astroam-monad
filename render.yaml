@@ -10,7 +10,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: PAYMENT_RAIL
-        value: monad
+        value: fake
       - key: CONNECTIVITY_PROVIDER
         value: fake
       - key: ASTROAM_LIVE_ENABLED

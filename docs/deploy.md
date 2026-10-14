@@ -13,14 +13,12 @@ The eSIM provider stays on `CONNECTIVITY_PROVIDER=fake`. Do not set `citrus` and
 
 1. In Render choose **New > Blueprint** and pick this repository. Render reads `render.yaml`: one web service, `astroam-api`, built from the `Dockerfile`, free plan, health check on `GET /health`.
 2. Render lists the variables marked `sync: false` and asks for a value. Set:
-   - `MONAD_ESCROW_ADDRESS`: the escrow address from the deploy.
-   - `MONAD_OPERATOR_PRIVATE_KEY`: the operator key, `0x` plus 64 hex characters. Secret.
    - `FRONTEND_ORIGIN`: any placeholder for now, for example `http://localhost:5173`. You set the real value in step 4.
-   - `ASTROAM_DEMO_ACCESS_TOKEN`: leave empty. It only matters when `ASTROAM_LIVE_ENABLED=true`.
-   - `CITRUS_API_KEY`, `CITRUS_WEBHOOK_SECRET`: leave empty.
+   - `MONAD_ESCROW_ADDRESS`, `MONAD_OPERATOR_PRIVATE_KEY`: leave empty for Phase 1 (`PAYMENT_RAIL=fake`). When moving to Phase 2 (Monad testnet on-chain), fill these in and switch `PAYMENT_RAIL=monad`.
+   - `ASTROAM_DEMO_ACCESS_TOKEN`, `CITRUS_API_KEY`, `CITRUS_WEBHOOK_SECRET`: leave empty.
 3. Apply the blueprint and wait for the first deploy. Render gives the service a public URL; note it as `<api-url>`.
 
-The values already in `render.yaml` are `PAYMENT_RAIL=monad`, `CONNECTIVITY_PROVIDER=fake`, `ASTROAM_LIVE_ENABLED=false`, `ENABLE_DEMO_TRAFFIC=true` and `DATA_DIR=/app/data`. The image sets `HOST=0.0.0.0` and `PORT=8080` itself. The RPC, chain id, USDC address and explorer default to Monad testnet; override `MONAD_RPC_URL`, `MONAD_CHAIN_ID`, `MONAD_USDC_ADDRESS` or `MONAD_EXPLORER_URL` in the dashboard only if you need to.
+The values already in `render.yaml` are `PAYMENT_RAIL=fake`, `CONNECTIVITY_PROVIDER=fake`, `ASTROAM_LIVE_ENABLED=false`, `ENABLE_DEMO_TRAFFIC=true` and `DATA_DIR=/app/data`. The image sets `HOST=0.0.0.0` and `PORT=8080` itself. The RPC, chain id, USDC address and explorer default to Monad testnet; override `MONAD_RPC_URL`, `MONAD_CHAIN_ID`, `MONAD_USDC_ADDRESS` or `MONAD_EXPLORER_URL` in the dashboard only if you need to.
 
 ## 2. Traveler app on Vercel
 
