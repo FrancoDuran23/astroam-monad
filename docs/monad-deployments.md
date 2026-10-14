@@ -11,11 +11,13 @@ the one in `MONAD_ESCROW_ADDRESS`.
 |---|---|---|---|---|---|
 | v1 | `0xc6ead43fdf838198854f7811658cc4edd50f7a0f` | 2026-10-03 | [`0x1c81…2bbb`](https://testnet.monadvision.com/tx/0x1c810803b012fab6598c39e492c1b8aab83fe92fc05d1d98440aae5bb9142bbb) | `0x441D3f2b790bE54dd55C3D47778D3E0385064b40` | No `claim`. Replaced by v2. |
 | v2 | `0xb357ef379227c4113d3dc439af587437ff3e8292` | 2026-10-05 (22:13 ART, 2026-10-06 01:13 UTC) | [`0xc09f…8daa`](https://testnet.monadvision.com/tx/0xc09f2289c4b0fcab0ff52b6d054bcfff1f2def634c4e33533b488d7c5c2e8daa) | `0x441D3f2b790bE54dd55C3D47778D3E0385064b40` | With `claim`. Replaced by v3 to use the new payee. |
-| **v3 (current)** | `0xe89893d51180e517e2bf175398aad2e6da82c0f9` | 2026-10-06 (22:46 ART, 2026-10-07 01:46 UTC) | [`0x5a8c…7a0b`](https://testnet.monadvision.com/tx/0x5a8c225be99ac3bf4f35eb2c0356b9d76808e1750a9cd2db3113915017327a0b) | `0xE3E38BE1522E2086B135cb9e9b3D223708485316` | With `claim`. Payee is our own operator. [View on the explorer](https://testnet.monadvision.com/address/0xe89893d51180e517e2bf175398aad2e6da82c0f9). |
+| v3 | `0xe89893d51180e517e2bf175398aad2e6da82c0f9` | 2026-10-06 (22:46 ART, 2026-10-07 01:46 UTC) | [`0x5a8c…7a0b`](https://testnet.monadvision.com/tx/0x5a8c225be99ac3bf4f35eb2c0356b9d76808e1750a9cd2db3113915017327a0b) | `0xE3E38BE1522E2086B135cb9e9b3D223708485316` | With `claim`. Payee is our own operator. Replaced by v4. |
+| **v4 (current)** | `0x89738331BadF0cb4278c21DE4D282dC24EE2987d` | 2026-10-14 (00:05 UTC) | [`0x69ec…2ae0`](https://testnet.monadvision.com/tx/0x69ec605d0242eb757248618454fee3b0335dddd958186de3e4cb4e29ff432ae0) | `0xb8ec7Fe73740eeC5Bc3E85E414562AfCd8056b61` | Separated operator & bounded claims. [View on the explorer](https://testnet.monadvision.com/address/0x89738331BadF0cb4278c21DE4D282dC24EE2987d). |
 
 Full txs: v1 `0x1c810803b012fab6598c39e492c1b8aab83fe92fc05d1d98440aae5bb9142bbb`,
 v2 `0xc09f2289c4b0fcab0ff52b6d054bcfff1f2def634c4e33533b488d7c5c2e8daa`,
-v3 `0x5a8c225be99ac3bf4f35eb2c0356b9d76808e1750a9cd2db3113915017327a0b`.
+v3 `0x5a8c225be99ac3bf4f35eb2c0356b9d76808e1750a9cd2db3113915017327a0b`,
+v4 `0x69ec605d0242eb757248618454fee3b0335dddd958186de3e4cb4e29ff432ae0`.
 
 ## What changed from v1 to v2
 
@@ -55,15 +57,11 @@ Vouchers are stored per contract address
 (`DATA_DIR/monad-vouchers-<escrow>.json`), so they are not migrated: those of
 v1 stay in their file and serve only to close v1 escrows.
 
-## v4 (pending deploy)
+## v4
 
 | Version | Address | Date | Deploy tx | Payee | Operator |
 |---|---|---|---|---|---|
-| v4 | pending | pending | pending | pending | pending |
-
-The address, the transaction and the date are filled in by whoever runs
-`npm run monad:deploy`, from what the script prints. Until then the v3 row
-above is the current deployment.
+| v4 | `0x89738331BadF0cb4278c21DE4D282dC24EE2987d` | 2026-10-14 (00:05 UTC) | [`0x69ec…2ae0`](https://testnet.monadvision.com/tx/0x69ec605d0242eb757248618454fee3b0335dddd958186de3e4cb4e29ff432ae0) | `0xb8ec7Fe73740eeC5Bc3E85E414562AfCd8056b61` | `0xb8ec7Fe73740eeC5Bc3E85E414562AfCd8056b61` |
 
 What changed from v3, and why:
 

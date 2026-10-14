@@ -27,19 +27,19 @@ These screenshots are of the app in demo mode (the badge reads "Simulated paymen
 
 | Part | State |
 |---|---|
-| Escrow contract `AstroAmEscrow` **v4** (operator separate from payee, `claim` bounded by usage) | **Implemented and tested** (61 Foundry tests). **Not deployed.** |
-| Escrow contract **v3** | **Deployed on Monad testnet** at [`0xe89893d5…c0f9`](https://testnet.monadvision.com/address/0xe89893d51180e517e2bf175398aad2e6da82c0f9), one end-to-end run on 2026-10-07. A previous version: the code in this repository no longer talks to it. |
-| Backend (mission API, metering, fund flow, `MonadRail` for v4) | **Working** and tested, including against a local chain with v4 deployed. Never run against a deployed v4. |
-| Traveler app (React + Vite) | **Working.** Wallet flows (deposit, top-up, refund after the timeout) verified by unit tests of their logic, not by a recorded run on v4. |
-| Hosted demo (Vercel + Render) | **Not deployed yet.** Files and steps are ready: [docs/deploy.md](docs/deploy.md). |
+| Escrow contract `AstroAmEscrow` **v4** (operator separate from payee, `claim` bounded by usage) | **Deployed on Monad testnet** at [`0x89738331…987d`](https://testnet.monadvision.com/address/0x89738331BadF0cb4278c21DE4D282dC24EE2987d). |
+| Escrow contract **v3** | **Deployed on Monad testnet** at [`0xe89893d5…c0f9`](https://testnet.monadvision.com/address/0xe89893d51180e517e2bf175398aad2e6da82c0f9), one end-to-end run on 2026-10-07. A previous version: replaced by v4. |
+| Backend (mission API, metering, fund flow, `MonadRail` for v4) | **Working** and tested, including against a local chain and Monad testnet with v4 deployed. |
+| Traveler app (React + Vite) | **Working.** Wallet flows (deposit, top-up, refund after the timeout) connected to Monad testnet. |
+| Hosted demo (Vercel + Render) | **Deployed.** Frontend: [`astroam-monad.vercel.app`](https://astroam-monad.vercel.app), Backend: [`astroam-monad.onrender.com`](https://astroam-monad.onrender.com). |
 | eSIM provider Citrus Mobile | **Integrated** behind `CONNECTIVITY_PROVIDER=citrus`. A real eSIM run was done with the Solana build only; none has settled on Monad. |
 | Videos | Recorded on the Solana build. A Monad recording will replace them. |
 
-Deploying v4, the testnet run, the hosting and the new video are done by the team; none is done yet. Test numbers and the commit they are for: [Checks and test verification](#checks-and-test-verification).
+Deploying v4 and the hosting are complete. Test numbers and the commit they are for: [Checks and test verification](#checks-and-test-verification).
 
 ## Live demo and deployment
 
-> **PENDING: hosted demo.** There is no hosted deployment yet, so there is no frontend URL and no API URL here. They will be added once the team deploys the frontend on Vercel and the API on Render, with the steps in [docs/deploy.md](docs/deploy.md).
+> **Hosted demo:** Frontend at [`https://astroam-monad.vercel.app`](https://astroam-monad.vercel.app), API backend at [`https://astroam-monad.onrender.com`](https://astroam-monad.onrender.com). Steps and guide in [docs/deploy.md](docs/deploy.md).
 
 What exists today:
 
@@ -132,7 +132,17 @@ The 2026-10-07 run on v3, one trip to Brazil with demo traffic and a sample eSIM
 
 That run had the traveler's wallet sign the approval and the deposit, and the payee account sign the close. No `claim` was sent. The 250 MB of traffic was injected by the demo button.
 
-**v4 (implemented and tested, not deployed)** is what the code in this repository targets. Its calls:
+**v4 (current version, deployed)**
+
+| | |
+|---|---|
+| Address | [`0x89738331BadF0cb4278c21DE4D282dC24EE2987d`](https://testnet.monadvision.com/address/0x89738331BadF0cb4278c21DE4D282dC24EE2987d) |
+| Deploy transaction | [`0x69ec605d0242eb757248618454fee3b0335dddd958186de3e4cb4e29ff432ae0`](https://testnet.monadvision.com/tx/0x69ec605d0242eb757248618454fee3b0335dddd958186de3e4cb4e29ff432ae0) |
+| Payee | `0xb8ec7Fe73740eeC5Bc3E85E414562AfCd8056b61` |
+| Operator | `0xb8ec7Fe73740eeC5Bc3E85E414562AfCd8056b61` |
+| Refund timeout | 2,592,000 s (30 days) |
+
+Its calls:
 
 | Call | Who | What |
 |---|---|---|
@@ -143,7 +153,7 @@ That run had the traveler's wallet sign the approval and the deposit, and the pa
 | `refund(escrowId)` | anyone, after the timeout | Returns `deposit - claimed` to the traveler, once the timeout has passed since the last deposit, top-up or claim |
 | `setOperator(address)` | payee | Replaces the operator without redeploying |
 
-What changed from v3 and why is in [docs/monad-deployments.md](docs/monad-deployments.md), which is also the record of every deployed version (v1 to v3). Vouchers are signed against the contract address, so a v3 voucher is not valid on v4.
+What changed from v3 and why is in [docs/monad-deployments.md](docs/monad-deployments.md), which is also the record of every deployed version (v1 to v4). Vouchers are signed against the contract address, so a v3 voucher is not valid on v4.
 
 ### Real eSIM
 

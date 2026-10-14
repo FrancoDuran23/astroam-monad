@@ -10,7 +10,9 @@ services:
     healthCheckPath: /health
     envVars:
       - key: PAYMENT_RAIL
-        value: fake
+        value: monad
+      - key: MONAD_ESCROW_ADDRESS
+        value: 0x89738331BadF0cb4278c21DE4D282dC24EE2987d
       - key: CONNECTIVITY_PROVIDER
         value: fake
       - key: ASTROAM_LIVE_ENABLED
@@ -21,8 +23,6 @@ services:
       - key: DATA_DIR
         value: /app/data
       # Secrets and per-deployment values, entered in the Render dashboard.
-      - key: MONAD_ESCROW_ADDRESS
-        sync: false
       - key: MONAD_OPERATOR_PRIVATE_KEY
         sync: false
       - key: CITRUS_API_KEY
