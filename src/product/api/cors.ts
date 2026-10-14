@@ -21,11 +21,11 @@ export function isWildcardOrigin(origin: string | undefined): boolean {
  */
 export function resolveAllowedOrigin(rawConfig: string | undefined, incomingOrigin: string | undefined): string | null {
   if (!rawConfig || rawConfig.trim() === '*') {
-    return '*'
+    return incomingOrigin || '*'
   }
   const allowed = rawConfig.split(',').map((s) => s.trim()).filter(Boolean)
   if (allowed.length === 0 || allowed.includes('*')) {
-    return '*'
+    return incomingOrigin || '*'
   }
 
   if (incomingOrigin) {
@@ -54,6 +54,7 @@ export function corsMiddleware(req: Request, res: Response, next: NextFunction):
   if (allowedOrigin) {
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
     if (allowedOrigin !== '*') {
+      res.setHeader('Access-Control-Allow-Credentials', 'true')
       res.setHeader('Vary', 'Origin')
     }
   }

@@ -14,8 +14,9 @@ test('isWildcardOrigin identifies wildcards correctly', () => {
 })
 
 test('resolveAllowedOrigin with wildcard or unset configuration', () => {
-  assert.equal(resolveAllowedOrigin(undefined, 'http://example.com'), '*')
-  assert.equal(resolveAllowedOrigin('*', 'http://example.com'), '*')
+  assert.equal(resolveAllowedOrigin(undefined, 'http://example.com'), 'http://example.com')
+  assert.equal(resolveAllowedOrigin('*', 'http://example.com'), 'http://example.com')
+  assert.equal(resolveAllowedOrigin(undefined, undefined), '*')
   assert.equal(resolveAllowedOrigin('  *  ', undefined), '*')
 })
 
@@ -64,6 +65,7 @@ test('corsMiddleware sets headers and handles OPTIONS preflight', () => {
     })
 
     assert.equal(headers['Access-Control-Allow-Origin'], 'http://192.168.1.50:5173')
+    assert.equal(headers['Access-Control-Allow-Credentials'], 'true')
     assert.equal(headers['Vary'], 'Origin')
     assert.equal(headers['Access-Control-Allow-Methods'], 'GET, POST, OPTIONS')
     assert.equal(headers['Access-Control-Allow-Headers'], 'Content-Type, Authorization')
